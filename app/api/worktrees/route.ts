@@ -49,7 +49,7 @@ for (const [key, config] of Object.entries(REPO_MAP)) {
 }
 
 const VALID_TYPES = ['feat', 'bugs', 'fixes', 'qaqc'];
-const ROOT_DIR = process.env.REPO_ROOT || '/repos';
+const ROOT_DIR = process.env.REPO_ROOT || '/home/tim-175/repos';
 const HOST_ROOT_DIR = process.env.HOST_REPO_ROOT || ROOT_DIR;
     // Worktrees are organized in Tree/{repo}/{branchName} at the root level
     // Use ROOT_DIR (container path) for actual file operations, HOST_ROOT_DIR is only for path translation
