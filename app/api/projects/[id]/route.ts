@@ -86,10 +86,10 @@ export async function GET(
       github_account_id: project.github_account_id,
       owner_id: project.owner_id,
       is_owner: isOwner,
-      github_account: project.github_accounts ? {
-        id: project.github_accounts.id,
-        account_name: project.github_accounts.account_name,
-        github_username: project.github_accounts.github_username,
+      github_account: project.github_accounts && (Array.isArray(project.github_accounts) ? project.github_accounts[0] : project.github_accounts) ? {
+        id: (Array.isArray(project.github_accounts) ? project.github_accounts[0] : project.github_accounts).id,
+        account_name: (Array.isArray(project.github_accounts) ? project.github_accounts[0] : project.github_accounts).account_name,
+        github_username: (Array.isArray(project.github_accounts) ? project.github_accounts[0] : project.github_accounts).github_username,
       } : null,
       members: (project.project_members || []).map((m: any) => ({
         id: m.id,
@@ -103,10 +103,10 @@ export async function GET(
         repository_full_name: r.repository_full_name,
         github_account_id: r.github_account_id,
         tracked_branch: r.tracked_branch || 'dev',
-        github_account: r.github_accounts ? {
-          id: r.github_accounts.id,
-          account_name: r.github_accounts.account_name,
-          github_username: r.github_accounts.github_username,
+        github_account: r.github_accounts && (Array.isArray(r.github_accounts) ? r.github_accounts[0] : r.github_accounts) ? {
+          id: (Array.isArray(r.github_accounts) ? r.github_accounts[0] : r.github_accounts).id,
+          account_name: (Array.isArray(r.github_accounts) ? r.github_accounts[0] : r.github_accounts).account_name,
+          github_username: (Array.isArray(r.github_accounts) ? r.github_accounts[0] : r.github_accounts).github_username,
         } : null,
         created_at: r.created_at,
       })),

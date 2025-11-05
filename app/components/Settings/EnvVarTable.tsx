@@ -52,19 +52,19 @@ export function EnvVarTable({ envVars, onUpdate, onDelete, onAdd }: EnvVarTableP
       </div>
 
       {envVars.length === 0 ? (
-        <p className="text-gray-500 text-sm">No environment variables. Click "Add Variable" or import from below.</p>
+        <p className="text-black text-sm">No environment variables. Click "Add Variable" or import from below.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 border border-gray-300 rounded-lg">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                   Key
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                   Value
                 </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -89,7 +89,7 @@ export function EnvVarTable({ envVars, onUpdate, onDelete, onAdd }: EnvVarTableP
                     <td className="px-4 py-3">
                       <div className="flex items-center space-x-2">
                         {showMasked ? (
-                          <div className="flex-1 px-2 py-1 border border-gray-300 rounded bg-gray-50 text-sm font-mono text-gray-500">
+                          <div className="flex-1 px-2 py-1 border border-gray-300 rounded bg-gray-50 text-sm font-mono text-gray-700">
                             {maskValue(envVar.value)}
                           </div>
                         ) : (

@@ -27,6 +27,11 @@ services:
       - BACKEND_KEY=${BACKEND_KEY:-backend}
       - VIEWER_KEY=${VIEWER_KEY:-viewer}
       - NODE_ENV=development
+      # Neon PostgreSQL Database
+      - DATABASE_URL=${DATABASE_URL:-}
+      # Ollama AI Server Configuration
+      - OLLAMA_SERVER=${OLLAMA_SERVER:-192.168.1.223:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
     volumes:
       # Mount the directory containing your repositories
       # Adjust this path to match where your repositories are located on the host
