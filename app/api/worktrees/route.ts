@@ -55,11 +55,13 @@ const HOST_ROOT_DIR = process.env.HOST_REPO_ROOT || ROOT_DIR;
     // Use ROOT_DIR (container path) for actual file operations, HOST_ROOT_DIR is only for path translation
     const WORKTREE_ROOT = process.env.WORKTREE_ROOT || path.join(ROOT_DIR, 'Tree');
 
-// Helper function to get GitHub token
-function getGitHubToken(): string | null {
+// Helper function to get GitHub token from environment (.env.local) or files
+export function getGitHubToken(): string | null {
+  // First check process.env (which includes .env.local via Next.js)
   let token = process.env.GITHUB_TOKEN;
   
   if (!token) {
+    // Fallback to reading from files (for backward compatibility)
     const tokenFiles = [
       path.join(ROOT_DIR, '..', '.github-token'),
       path.join(ROOT_DIR, '..', 'token'),
@@ -664,13 +666,64 @@ async function createWorktreeForRepo(
     console.log(`Creating worktree with command: ${worktreeCommand} (branch exists: ${branchExists})`);
     console.log(`Worktree path: ${worktreePath}, Parent dir: ${parentDir}, WORKTREE_ROOT: ${WORKTREE_ROOT}`);
     console.log(`Using container paths: ROOT_DIR=${ROOT_DIR}, HOST_ROOT_DIR=${HOST_ROOT_DIR}`);
+    console.log(`Repository path: ${repoPath}`);
+    console.log(`Base branch: ${resolvedBaseBranch}`);
+    
+    // Verify the repository exists and is a valid git repo
+    if (!existsSync(repoPath) || !existsSync(path.join(repoPath, '.git'))) {
+      return { 
+        success: false, 
+        error: `Repository ${config.name} not found or not a valid git repository at ${repoPath}` 
+      };
+    }
+    
     try {
       // Ensure we're using container paths for git operations
       const result = await execAsync(worktreeCommand, {
         cwd: repoPath,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        timeout: 60000 // 60 second timeout
       });
       console.log(`Git command output: ${result.stdout}`);
+      if (result.stderr && result.stderr.trim()) {
+        console.log(`Git command stderr: ${result.stderr}`);
+      }
+      
+      // Verify the worktree directory was actually created and has .git file
+      if (!existsSync(worktreePath)) {
+        throw new Error(`Worktree directory was not created at ${worktreePath}`);
+      }
+      
+      const gitFile = path.join(worktreePath, '.git');
+      if (!existsSync(gitFile)) {
+        // Clean up the directory if it was created but .git file is missing
+        try {
+          rmSync(worktreePath, { recursive: true, force: true });
+        } catch (cleanupError) {
+          console.warn(`Failed to cleanup incomplete worktree directory: ${cleanupError}`);
+        }
+        throw new Error(`Worktree was created but .git file is missing. This indicates git worktree add failed.`);
+      }
+      
+      // Verify it's a file, not a directory
+      try {
+        const gitStat = statSync(gitFile);
+        if (gitStat.isDirectory()) {
+          // Clean up - this shouldn't happen but handle it
+          try {
+            rmSync(worktreePath, { recursive: true, force: true });
+          } catch (cleanupError) {
+            console.warn(`Failed to cleanup invalid worktree: ${cleanupError}`);
+          }
+          throw new Error(`Worktree directory contains .git as directory instead of file. This is invalid.`);
+        }
+      } catch (statError: any) {
+        if (statError.message && statError.message.includes('invalid')) {
+          throw statError;
+        }
+        // Continue if stat check fails for other reasons
+      }
+      
       console.log(`Successfully created worktree at ${worktreePath}`);
       
       // Verify the worktree was created with correct paths
@@ -678,7 +731,7 @@ async function createWorktreeForRepo(
       console.log(`Worktree list after creation:\n${worktreeListAfter}`);
       
       // Fix the .git file to use host path for host access (VS Code, etc.)
-      const gitFile = path.join(worktreePath, '.git');
+      // gitFile is already declared above, reuse it
       if (existsSync(gitFile)) {
         try {
           const gitContent = readFileSync(gitFile, 'utf-8').trim();
@@ -735,6 +788,41 @@ async function createWorktreeForRepo(
       const errorMessage = error.stderr || error.stdout || error.message || 'Unknown error';
       console.error(`Failed to create worktree: ${errorMessage}`);
       console.error(`Full error object:`, error);
+      console.error(`Command that failed: ${worktreeCommand}`);
+      console.error(`Repository path: ${repoPath}`);
+      console.error(`Worktree path: ${worktreePath}`);
+      
+      // Clean up any partially created directory
+      if (existsSync(worktreePath)) {
+        try {
+          // Check if it's a valid worktree before removing
+          const gitFile = path.join(worktreePath, '.git');
+          if (!existsSync(gitFile)) {
+            // Not a valid worktree, safe to remove
+            console.log(`Cleaning up incomplete worktree directory: ${worktreePath}`);
+            rmSync(worktreePath, { recursive: true, force: true });
+          } else {
+            // Has .git file, might be a valid worktree - check if it's registered
+            try {
+              const { stdout: worktreeList } = await execAsync('git worktree list', { cwd: repoPath });
+              const isRegistered = worktreeList.includes(worktreePath);
+              if (!isRegistered) {
+                // Not registered, safe to remove
+                console.log(`Cleaning up unregistered worktree directory: ${worktreePath}`);
+                rmSync(worktreePath, { recursive: true, force: true });
+              } else {
+                console.log(`Worktree directory exists and is registered, not removing`);
+              }
+            } catch (listError) {
+              // If we can't check, be conservative and don't remove
+              console.warn(`Could not verify worktree registration, not removing directory`);
+            }
+          }
+        } catch (cleanupError) {
+          console.warn(`Failed to cleanup after error: ${cleanupError}`);
+        }
+      }
+      
       return { 
         success: false, 
         error: `Failed to create worktree: ${errorMessage}` 
@@ -820,24 +908,32 @@ async function createWorktreeForRepo(
     // Verify the worktree is properly registered
     try {
       const { stdout: worktreeList } = await execAsync('git worktree list', { cwd: repoPath });
+      console.log(`Current worktree list:\n${worktreeList}`);
       const worktreeLines = worktreeList.trim().split('\n');
       const worktreeFound = worktreeLines.some(line => {
         const parts = line.trim().split(/\s+/);
         if (parts.length < 2) return false;
         const wtPath = parts[0];
         // Check both container and host paths
-        return wtPath === worktreePath || 
-               wtPath === worktreePath.replace(ROOT_DIR, HOST_ROOT_DIR) ||
-               wtPath.replace(HOST_ROOT_DIR, ROOT_DIR) === worktreePath;
+        const normalizedWtPath = wtPath.replace(/\/$/, '');
+        const normalizedTargetPath = worktreePath.replace(/\/$/, '');
+        return normalizedWtPath === normalizedTargetPath || 
+               normalizedWtPath === normalizedTargetPath.replace(ROOT_DIR, HOST_ROOT_DIR) ||
+               normalizedWtPath.replace(HOST_ROOT_DIR, ROOT_DIR) === normalizedTargetPath;
       });
       
       if (!worktreeFound) {
-        console.warn(`Worktree at ${worktreePath} not found in git worktree list`);
+        console.error(`ERROR: Worktree at ${worktreePath} not found in git worktree list after creation!`);
+        console.error(`This means the worktree was not properly registered with git.`);
+        // Try to verify the directory exists
+        if (existsSync(worktreePath)) {
+          console.error(`Directory exists but is not registered. This may indicate a git worktree creation failure.`);
+        }
       } else {
-        console.log(`Worktree successfully registered in git`);
+        console.log(`✓ Worktree successfully registered in git`);
       }
     } catch (error) {
-      console.warn('Failed to verify worktree registration:', error);
+      console.error('Failed to verify worktree registration:', error);
     }
     
     return {

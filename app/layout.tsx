@@ -1,17 +1,20 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Montserrat } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "./components/Sidebar";
+import { MainContent } from "./components/MainContent";
 import { AuthProvider } from "../components/auth/AuthProvider";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const montserrat = Montserrat({
+  variable: "--font-montserrat",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -23,6 +26,11 @@ export const metadata: Metadata = {
       { url: '/favicon.ico', type: 'image/x-icon' },
     ],
   },
+  viewport: {
+    width: 'device-width',
+    initialScale: 1,
+    maximumScale: 5,
+  },
 };
 
 export default function RootLayout({
@@ -33,14 +41,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${inter.variable} ${montserrat.variable} antialiased`}
       >
         <AuthProvider>
-          <div className="flex h-screen">
+          <div className="flex h-screen overflow-hidden max-h-screen">
             <Sidebar />
-            <main className="flex-1 lg:ml-64 overflow-auto">
+            <MainContent>
               {children}
-            </main>
+            </MainContent>
           </div>
         </AuthProvider>
       </body>

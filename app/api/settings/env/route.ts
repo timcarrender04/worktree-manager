@@ -14,6 +14,18 @@ function getEnvFilePath(): string {
   return path.resolve(process.cwd(), '.env');
 }
 
+// Get the .env.local file path
+function getEnvLocalFilePath(): string {
+  // Try to use ENV_LOCAL_FILE_PATH if set, otherwise default to .env.local in project root
+  const envLocalPath = process.env.ENV_LOCAL_FILE_PATH;
+  if (envLocalPath) {
+    return path.resolve(envLocalPath);
+  }
+  
+  // Default to .env.local in the project root (worktree-manager directory)
+  return path.resolve(process.cwd(), '.env.local');
+}
+
 // Parse .env file content into key-value pairs
 function parseEnvFile(content: string): Array<{ key: string; value: string; comment?: string }> {
   const lines = content.split('\n');
@@ -72,30 +84,45 @@ function serializeEnvFile(envVars: Array<{ key: string; value: string }>): strin
   return lines.join('\n');
 }
 
-// GET - Read .env file
+// GET - Read .env and .env.local files (merge with .env.local taking precedence)
 export async function GET() {
   try {
     const envPath = getEnvFilePath();
+    const envLocalPath = getEnvLocalFilePath();
     
-    if (!existsSync(envPath)) {
-      // Return empty array if file doesn't exist
-      return NextResponse.json({ envVars: [] });
+    const envVarsMap = new Map<string, { key: string; value: string }>();
+    
+    // Read .env file first
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, 'utf-8');
+      const envVars = parseEnvFile(content);
+      envVars.forEach(({ key, value }) => {
+        envVarsMap.set(key, { key, value });
+      });
     }
     
-    const content = readFileSync(envPath, 'utf-8');
-    const envVars = parseEnvFile(content);
+    // Read .env.local file (overrides .env values)
+    if (existsSync(envLocalPath)) {
+      const content = readFileSync(envLocalPath, 'utf-8');
+      const envVars = parseEnvFile(content);
+      envVars.forEach(({ key, value }) => {
+        envVarsMap.set(key, { key, value });
+      });
+    }
+    
+    const envVars = Array.from(envVarsMap.values());
     
     return NextResponse.json({ envVars });
   } catch (error: any) {
-    console.error('Error reading .env file:', error);
+    console.error('Error reading .env files:', error);
     return NextResponse.json(
-      { error: `Failed to read .env file: ${error.message}` },
+      { error: `Failed to read .env files: ${error.message}` },
       { status: 500 }
     );
   }
 }
 
-// POST - Write/update .env file
+// POST - Write/update both .env and .env.local files
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -133,16 +160,21 @@ export async function POST(request: Request) {
     }
     
     const envPath = getEnvFilePath();
+    const envLocalPath = getEnvLocalFilePath();
     const content = serializeEnvFile(envVars);
     
-    // Write to file
+    // Write to both .env and .env.local files
     writeFileSync(envPath, content, 'utf-8');
+    writeFileSync(envLocalPath, content, 'utf-8');
     
-    return NextResponse.json({ success: true, message: 'Environment variables saved successfully' });
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Environment variables saved successfully to both .env and .env.local files' 
+    });
   } catch (error: any) {
-    console.error('Error writing .env file:', error);
+    console.error('Error writing .env files:', error);
     return NextResponse.json(
-      { error: `Failed to write .env file: ${error.message}` },
+      { error: `Failed to write .env files: ${error.message}` },
       { status: 500 }
     );
   }

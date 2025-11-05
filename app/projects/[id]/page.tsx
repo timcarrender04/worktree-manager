@@ -2,8 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { KanbanBoard } from '@/app/components/KanbanBoard';
-import { VoiceTaskCreator } from '@/app/components/VoiceTaskCreator';
+import { KanbanBoard } from '@/components/kanban/KanbanBoard';
+import { VoiceTaskCreator } from '@/components/VoiceTaskCreator';
+import { RoadmapView } from '@/components/roadmap/RoadmapView';
+import { InsightsView } from '@/components/insights/InsightsView';
+import { TeamItemsTab } from '@/components/projects/TeamItemsTab';
+import { MyItemsTab } from '@/components/projects/MyItemsTab';
 
 interface Project {
   id: string;
@@ -30,7 +34,7 @@ interface Project {
   updated_at: string;
 }
 
-type Tab = 'overview' | 'kanban' | 'repositories' | 'members';
+type Tab = 'backlog' | 'roadmap' | 'insights' | 'team-items' | 'my-items' | 'repositories' | 'members' | 'overview';
 
 export default function ProjectDetailPage({ params }: { params: { id: string } }) {
   return <ProjectDetailContent projectId={params.id} />;
@@ -41,7 +45,7 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
   const [boardId, setBoardId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>('kanban');
+  const [activeTab, setActiveTab] = useState<Tab>('backlog');
 
   useEffect(() => {
     fetchProjectDetails();
@@ -105,20 +109,60 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
         {/* Tabs */}
         <div className="bg-white rounded-lg shadow-md">
           <div className="border-b border-gray-200">
-            <nav className="flex -mb-px">
+            <nav className="flex -mb-px overflow-x-auto">
               <button
-                onClick={() => setActiveTab('kanban')}
-                className={`px-6 py-4 text-sm font-medium border-b-2 ${
-                  activeTab === 'kanban'
+                onClick={() => setActiveTab('backlog')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'backlog'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                Kanban Board
+                Backlog
+              </button>
+              <button
+                onClick={() => setActiveTab('roadmap')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'roadmap'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Roadmap
+              </button>
+              <button
+                onClick={() => setActiveTab('insights')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'insights'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Insights
+              </button>
+              <button
+                onClick={() => setActiveTab('team-items')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'team-items'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Team Items
+              </button>
+              <button
+                onClick={() => setActiveTab('my-items')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'my-items'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                My Items
               </button>
               <button
                 onClick={() => setActiveTab('repositories')}
-                className={`px-6 py-4 text-sm font-medium border-b-2 ${
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
                   activeTab === 'repositories'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -128,7 +172,7 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
               </button>
               <button
                 onClick={() => setActiveTab('members')}
-                className={`px-6 py-4 text-sm font-medium border-b-2 ${
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
                   activeTab === 'members'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -138,7 +182,7 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
               </button>
               <button
                 onClick={() => setActiveTab('overview')}
-                className={`px-6 py-4 text-sm font-medium border-b-2 ${
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
                   activeTab === 'overview'
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -150,7 +194,7 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
           </div>
 
           <div className="p-6">
-            {activeTab === 'kanban' && (
+            {activeTab === 'backlog' && (
               <div className="space-y-6">
                 <div className="mb-6">
                   <VoiceTaskCreator
@@ -172,6 +216,18 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
                   />
                 )}
               </div>
+            )}
+            {activeTab === 'roadmap' && (
+              <RoadmapView projectId={projectId} />
+            )}
+            {activeTab === 'insights' && (
+              <InsightsView projectId={projectId} />
+            )}
+            {activeTab === 'team-items' && (
+              <TeamItemsTab projectId={projectId} />
+            )}
+            {activeTab === 'my-items' && (
+              <MyItemsTab projectId={projectId} />
             )}
             {activeTab === 'repositories' && (
               <RepositoriesTab repositories={project.repositories} />

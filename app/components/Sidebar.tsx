@@ -1,10 +1,28 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Load saved state from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    if (saved !== null) {
+      setIsCollapsed(JSON.parse(saved));
+    }
+  }, []);
+
+  // Save state to localStorage and notify other components
+  useEffect(() => {
+    localStorage.setItem('sidebarCollapsed', JSON.stringify(isCollapsed));
+    // Dispatch custom event to notify MainContent
+    window.dispatchEvent(new Event('sidebarToggle'));
+  }, [isCollapsed]);
 
   const navItems = [
     {
@@ -38,35 +56,128 @@ export function Sidebar() {
   ];
 
   return (
-    <div className="fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-white hidden lg:block">
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="flex items-center h-16 px-6 border-b border-gray-800">
-          <h1 className="text-xl font-bold">Worktree Manager</h1>
-        </div>
+    <>
+      <div className={`fixed inset-y-0 left-0 z-50 bg-[var(--navy-800)] text-white hidden lg:block transition-all duration-300 ${isCollapsed ? 'w-16' : 'w-64'}`}>
+        <div className="flex flex-col h-full">
+          {/* Header */}
+          <div className="flex items-center justify-end h-16 px-6 border-b border-[var(--navy-700)] pt-0">
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="p-2 rounded hover:bg-[var(--navy-700)] transition-colors"
+              title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {isCollapsed ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              )}
+            </button>
+          </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-2">
-          {navItems.map((item) => {
-            const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${
-                  isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                }`}
-              >
-                {item.icon}
-                <span className="font-medium">{item.name}</span>
-              </Link>
-            );
-          })}
-        </nav>
+          {/* Navigation */}
+          <nav className="flex-1 px-4 py-6 space-y-2">
+            {navItems.map((item) => {
+              const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href));
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-3'} px-4 py-3 rounded-lg transition-all duration-200 ${
+                    isActive
+                      ? 'bg-[var(--accent)] text-[var(--navy-900)] font-semibold shadow-lg'
+                      : 'text-white/90 hover:bg-[var(--navy-700)] hover:text-white'
+                  }`}
+                  title={isCollapsed ? item.name : undefined}
+                >
+                  <span className="flex-shrink-0">{item.icon}</span>
+                  {!isCollapsed && <span className="font-medium" style={{ fontFamily: 'var(--font-inter)' }}>{item.name}</span>}
+                </Link>
+              );
+            })}
+          </nav>
+
+          {/* Footer with Title */}
+          <div className="px-6 py-4 border-t border-[var(--navy-700)]">
+            {!isCollapsed && (
+              <h1 className="text-xl font-bold text-white leading-tight" style={{ fontFamily: 'var(--font-montserrat)' }}>
+                Worktree Manager
+              </h1>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+      {/* Mobile toggle button */}
+      <button
+        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        className="lg:hidden fixed top-3 left-3 sm:top-4 sm:left-4 z-50 p-2.5 sm:p-2 bg-[var(--navy-800)] text-white rounded-lg shadow-lg hover:bg-[var(--navy-700)] active:bg-[var(--navy-600)] transition-colors touch-manipulation"
+        title={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+        aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
+      {/* Mobile sidebar overlay */}
+      {mobileMenuOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="lg:hidden fixed inset-0 bg-black/50 z-40 transition-opacity"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-hidden="true"
+          />
+          {/* Mobile sidebar drawer */}
+          <div className="lg:hidden fixed inset-y-0 left-0 z-50 bg-[var(--navy-800)] text-white w-64 transform transition-transform duration-300 ease-in-out translate-x-0">
+            <div className="flex flex-col h-full">
+              {/* Header */}
+              <div className="flex items-center justify-between h-16 px-6 border-b border-[var(--navy-700)]">
+                <h1 className="text-xl font-bold text-white" style={{ fontFamily: 'var(--font-montserrat)' }}>
+                  Worktree Manager
+                </h1>
+                <button
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-2 rounded-lg hover:bg-[var(--navy-700)] active:bg-[var(--navy-600)] transition-colors touch-manipulation"
+                  title="Close menu"
+                  aria-label="Close menu"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Navigation */}
+              <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
+                {navItems.map((item) => {
+                  const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href));
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={`flex items-center space-x-3 px-4 py-3.5 rounded-lg transition-all duration-200 touch-manipulation ${
+                        isActive
+                          ? 'bg-[var(--accent)] text-[var(--navy-900)] font-semibold shadow-lg'
+                          : 'text-white/90 hover:bg-[var(--navy-700)] active:bg-[var(--navy-600)] hover:text-white'
+                      }`}
+                    >
+                      <span className="flex-shrink-0">{item.icon}</span>
+                      <span className="font-medium" style={{ fontFamily: 'var(--font-inter)' }}>{item.name}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
+          </div>
+        </>
+      )}
+    </>
   );
 }
+
 

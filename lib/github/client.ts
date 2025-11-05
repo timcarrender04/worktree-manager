@@ -201,6 +201,50 @@ export function createGitHubClient(token: string) {
       }
       return response.json()
     },
+
+    /**
+     * Create a branch from a base branch
+     */
+    async createBranch(owner: string, repo: string, branchName: string, baseBranch: string): Promise<void> {
+      // First, get the SHA of the base branch
+      const baseBranchResponse = await fetch(`${baseUrl}/repos/${owner}/${repo}/git/ref/heads/${baseBranch}`, { headers })
+      if (!baseBranchResponse.ok) {
+        throw new Error(`Failed to get base branch: ${baseBranchResponse.status} ${baseBranchResponse.statusText}`)
+      }
+      const baseBranchData = await baseBranchResponse.json()
+      const sha = baseBranchData.object.sha
+
+      // Create the new branch
+      const createResponse = await fetch(`${baseUrl}/repos/${owner}/${repo}/git/refs`, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ref: `refs/heads/${branchName}`,
+          sha: sha,
+        }),
+      })
+
+      if (!createResponse.ok) {
+        const errorData = await createResponse.json().catch(() => ({}))
+        throw new Error(`Failed to create branch: ${createResponse.status} ${errorData.message || createResponse.statusText}`)
+      }
+    },
+
+    /**
+     * Delete a branch
+     */
+    async deleteBranch(owner: string, repo: string, branchName: string): Promise<boolean> {
+      const response = await fetch(`${baseUrl}/repos/${owner}/${repo}/git/refs/heads/${branchName}`, {
+        method: 'DELETE',
+        headers,
+      })
+      
+      // 204 = success, 404 = branch doesn't exist (consider success)
+      return response.ok || response.status === 404
+    },
   }
 }
 

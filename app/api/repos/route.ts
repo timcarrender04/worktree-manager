@@ -7,11 +7,13 @@ import path from 'path';
 const execAsync = promisify(exec);
 const ROOT_DIR = process.env.REPO_ROOT || '/repos';
 
-// Helper function to get GitHub token from environment or files
+// Helper function to get GitHub token from environment (.env.local) or files
 function getGitHubToken(): string | null {
+  // First check process.env (which includes .env.local via Next.js)
   let token = process.env.GITHUB_TOKEN;
   
   if (!token) {
+    // Fallback to reading from files (for backward compatibility)
     const tokenFiles = [
       path.join(ROOT_DIR, '..', '.github-token'),
       path.join(ROOT_DIR, '..', 'token'),

@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { EnvVarTable } from '../components/Settings/EnvVarTable';
 import { BulkImport } from '../components/Settings/BulkImport';
 import { ServiceToggle } from '../components/Settings/ServiceToggle';
+import { OsSettings } from '../components/Settings/OsSettings';
+import { WelcomeModal } from '../components/Settings/WelcomeModal';
 
 interface EnvVar {
   key: string;
@@ -37,7 +39,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'services'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'services' | 'os'>('general');
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+  const isInitialLoad = useRef(true);
 
   // Service toggles state
   const [supabaseEnabled, setSupabaseEnabled] = useState(false);
@@ -81,7 +85,16 @@ export default function SettingsPage() {
         throw new Error(data.error || 'Failed to load environment variables');
       }
       
-      setEnvVars(data.envVars || []);
+      const loadedVars = data.envVars || [];
+      setEnvVars(loadedVars);
+      
+      // Show welcome modal only on initial load if no environment variables are found
+      if (isInitialLoad.current && loadedVars.length === 0) {
+        setShowWelcomeModal(true);
+        isInitialLoad.current = false;
+      } else if (isInitialLoad.current) {
+        isInitialLoad.current = false;
+      }
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message || 'Failed to load environment variables' });
     } finally {
@@ -213,10 +226,18 @@ export default function SettingsPage() {
     return values;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     // Filter out empty keys
     const validVars = envVars.filter(v => v.key.trim() !== '');
-    saveEnvVars(validVars);
+    await saveEnvVars(validVars);
+  };
+
+  const handleWelcomeImport = async (importedVars: EnvVar[]) => {
+    // Set the imported variables directly (welcome modal handles first-time setup)
+    setEnvVars(importedVars);
+    // Save the imported variables immediately
+    const validVars = importedVars.filter(v => v.key.trim() !== '');
+    await saveEnvVars(validVars);
   };
 
   const handleExport = () => {
@@ -238,7 +259,15 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <>
+      {showWelcomeModal && (
+        <WelcomeModal
+          onImport={handleWelcomeImport}
+          onClose={() => setShowWelcomeModal(false)}
+          saving={saving}
+        />
+      )}
+      <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-6xl mx-auto px-4">
         <h1 className="text-4xl font-bold mb-8 text-gray-900">Settings</h1>
 
@@ -260,7 +289,7 @@ export default function SettingsPage() {
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'general'
                   ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'border-transparent text-gray-600 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               General
@@ -270,10 +299,20 @@ export default function SettingsPage() {
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'services'
                   ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'border-transparent text-gray-600 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               Service Configs
+            </button>
+            <button
+              onClick={() => setActiveTab('os')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'os'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              OS Settings
             </button>
           </nav>
         </div>
@@ -377,8 +416,23 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        {/* OS Settings Tab */}
+        {activeTab === 'os' && (
+          <div className="space-y-6">
+            <OsSettings
+              envVars={envVars}
+              onUpdate={handleUpdate}
+              onDelete={handleDelete}
+              onAdd={handleAdd}
+              onSave={handleSave}
+              saving={saving}
+            />
+          </div>
+        )}
       </div>
     </div>
+    </>
   );
 }
 
