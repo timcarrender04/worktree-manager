@@ -172,3 +172,4 @@ All test results saved in: `/home/tim-175/repos/Tree/worktree-manager/worktree-m
 3. Test with multiple repositories selected
 4. Test error handling scenarios
 
+
