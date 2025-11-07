@@ -66,8 +66,40 @@ export function VoiceInput({ onTranscript, disabled = false }: VoiceInputProps) 
   const [transcript, setTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const manualStopRef = useRef(true);
+  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const committedTranscriptRef = useRef('');
+  const sessionTranscriptRef = useRef('');
+  const isRecordingActiveRef = useRef(false);
 
   useEffect(() => {
+    const scheduleRestart = (delay = 250) => {
+      if (restartTimeoutRef.current) {
+        clearTimeout(restartTimeoutRef.current);
+      }
+      restartTimeoutRef.current = setTimeout(() => {
+        if (!isRecordingActiveRef.current || manualStopRef.current) {
+          return;
+        }
+        if (recognitionRef.current) {
+          try {
+            sessionTranscriptRef.current = '';
+            recognitionRef.current.start();
+          } catch (err) {
+            const domError = err as DOMException;
+            if (domError && domError.name === 'InvalidStateError') {
+              scheduleRestart(Math.min(delay * 3.5, 2000));
+              return;
+            }
+            console.error('Failed to resume recognition:', err);
+            manualStopRef.current = true;
+            setError('Failed to resume voice recognition');
+            isRecordingActiveRef.current = false;
+          }
+        }
+      }, delay);
+    };
+
     // Check if browser supports Speech Recognition
     if (typeof window === 'undefined') return;
 
@@ -95,43 +127,103 @@ export function VoiceInput({ onTranscript, disabled = false }: VoiceInputProps) 
       let finalTranscript = '';
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
+        const text = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalTranscript += transcript + ' ';
+          finalTranscript += text;
         } else {
-          interimTranscript += transcript;
+          interimTranscript += text;
         }
       }
 
-      const fullTranscript = finalTranscript + interimTranscript;
-      setTranscript(fullTranscript);
-      
-      if (finalTranscript) {
-        onTranscript(finalTranscript.trim());
+      const finalText = finalTranscript.trim();
+      if (finalText) {
+        const separator = sessionTranscriptRef.current ? ' ' : '';
+        sessionTranscriptRef.current = `${sessionTranscriptRef.current}${separator}${finalText}`.trim();
+
+        const fullSeparator = committedTranscriptRef.current ? ' ' : '';
+        const fullText = `${committedTranscriptRef.current}${fullSeparator}${sessionTranscriptRef.current}`.trim();
+        onTranscript(fullText);
       }
+
+      const interimText = interimTranscript.trim();
+      const baseText = committedTranscriptRef.current;
+      const currentSessionText = sessionTranscriptRef.current;
+
+      let displayText = baseText;
+      if (currentSessionText) {
+        const sep1 = displayText ? ' ' : '';
+        displayText = `${displayText}${sep1}${currentSessionText}`;
+      }
+      if (interimText) {
+        const sep2 = displayText ? ' ' : '';
+        displayText = `${displayText}${sep2}${interimText}`;
+      }
+
+      setTranscript(displayText);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error('Speech recognition error:', event.error);
-      if (event.error === 'no-speech') {
-        setError('No speech detected. Please try again.');
+      if (sessionTranscriptRef.current) {
+        const separator = committedTranscriptRef.current ? ' ' : '';
+        committedTranscriptRef.current = `${committedTranscriptRef.current}${separator}${sessionTranscriptRef.current}`.trim();
+        sessionTranscriptRef.current = '';
+        setTranscript(committedTranscriptRef.current);
+        onTranscript(committedTranscriptRef.current);
+      }
+
+      if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'network') {
+        manualStopRef.current = false;
+        setError(null);
+        if (isRecordingActiveRef.current) {
+          scheduleRestart();
+        }
+        return;
       } else if (event.error === 'audio-capture') {
         setError('Microphone not found. Please check your microphone.');
+        manualStopRef.current = true;
+        isRecordingActiveRef.current = false;
       } else if (event.error === 'not-allowed') {
         setError('Microphone permission denied. Please allow microphone access.');
+        manualStopRef.current = true;
+        isRecordingActiveRef.current = false;
       } else {
         setError(`Speech recognition error: ${event.error}`);
+        manualStopRef.current = true;
+        isRecordingActiveRef.current = false;
       }
+
+      if (manualStopRef.current && restartTimeoutRef.current) {
+        clearTimeout(restartTimeoutRef.current);
+        restartTimeoutRef.current = null;
+      }
+
       setIsListening(false);
     };
 
     recognition.onend = () => {
+      if (sessionTranscriptRef.current) {
+        const separator = committedTranscriptRef.current ? ' ' : '';
+        committedTranscriptRef.current = `${committedTranscriptRef.current}${separator}${sessionTranscriptRef.current}`.trim();
+        sessionTranscriptRef.current = '';
+        setTranscript(committedTranscriptRef.current);
+        onTranscript(committedTranscriptRef.current);
+      }
+
       setIsListening(false);
+      if (!manualStopRef.current && isRecordingActiveRef.current) {
+        scheduleRestart();
+      }
     };
 
     recognitionRef.current = recognition;
 
     return () => {
+      manualStopRef.current = true;
+      isRecordingActiveRef.current = false;
+      if (restartTimeoutRef.current) {
+        clearTimeout(restartTimeoutRef.current);
+      }
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
@@ -140,27 +232,48 @@ export function VoiceInput({ onTranscript, disabled = false }: VoiceInputProps) 
 
   const startListening = () => {
     if (recognitionRef.current && !isListening) {
-      setTranscript('');
       setError(null);
+      setTranscript(committedTranscriptRef.current);
+      sessionTranscriptRef.current = '';
+      manualStopRef.current = false;
+      isRecordingActiveRef.current = true;
       try {
         recognitionRef.current.start();
       } catch (err) {
         console.error('Failed to start recognition:', err);
         setError('Failed to start voice recognition');
+        manualStopRef.current = true;
+        isRecordingActiveRef.current = false;
       }
     }
   };
 
   const stopListening = () => {
     if (recognitionRef.current && isListening) {
+      manualStopRef.current = true;
+      isRecordingActiveRef.current = false;
+
+      if (sessionTranscriptRef.current) {
+        const separator = committedTranscriptRef.current ? ' ' : '';
+        committedTranscriptRef.current = `${committedTranscriptRef.current}${separator}${sessionTranscriptRef.current}`.trim();
+        sessionTranscriptRef.current = '';
+        setTranscript(committedTranscriptRef.current);
+        onTranscript(committedTranscriptRef.current);
+      }
+
       recognitionRef.current.stop();
     }
   };
 
   const clearTranscript = () => {
+    committedTranscriptRef.current = '';
+    sessionTranscriptRef.current = '';
     setTranscript('');
     setError(null);
+    onTranscript('');
     if (recognitionRef.current && isListening) {
+      manualStopRef.current = true;
+      isRecordingActiveRef.current = false;
       recognitionRef.current.stop();
     }
   };
@@ -168,8 +281,12 @@ export function VoiceInput({ onTranscript, disabled = false }: VoiceInputProps) 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setTranscript(value);
+    committedTranscriptRef.current = value;
+    sessionTranscriptRef.current = '';
     onTranscript(value.trim());
   };
+
+  const fatalError = error ? /not supported|permission denied|microphone not found/i.test(error) : false;
 
   return (
     <div className="space-y-2">
@@ -177,7 +294,7 @@ export function VoiceInput({ onTranscript, disabled = false }: VoiceInputProps) 
       <textarea
         value={transcript}
         onChange={handleTextChange}
-        placeholder="Type your feature description here, or use voice input below..."
+        placeholder="Type your task description here, or use voice input below..."
         disabled={disabled || isListening}
         className="w-full px-4 py-3 border border-[var(--white-100)] rounded-lg bg-[var(--white)] text-[var(--foreground)] focus:ring-2 focus:ring-[var(--accent)] focus:border-[var(--accent)] transition-colors resize-none min-h-[120px] disabled:bg-[var(--white-100)] disabled:text-[var(--foreground-muted)] disabled:cursor-not-allowed"
         rows={4}
@@ -191,7 +308,7 @@ export function VoiceInput({ onTranscript, disabled = false }: VoiceInputProps) 
         <button
           type="button"
           onClick={isListening ? stopListening : startListening}
-          disabled={disabled || !!error}
+          disabled={disabled || fatalError}
           className={`px-4 py-2 rounded-md font-medium transition-colors text-sm ${
             isListening
               ? 'bg-red-600 text-white hover:bg-red-700'

@@ -236,15 +236,28 @@ export async function GET(
 ) {
   try {
     const { repo } = await params;
+    const repoParam = repo;
+
+    const sanitizeKey = (value: string) => value
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '-');
     
-    // The repo parameter is now a sanitized full_name key (e.g., "org-repo-name")
-    // We need to find the actual full_name by searching across all GitHub accounts
+    const repoKey = sanitizeKey(repoParam);
+    
+    // The repo parameter may include a sanitized account identifier suffix
+    // (as generated in /api/repos). Track possible account matches so we
+    // can prefer those tokens when looking up the repository.
+    const accountKeyMap = new Map<string, { id: string; account_name: string; github_username: string; encrypted_token: string; from_env?: boolean }>();
     
     // Get authenticated user ID
     const userId = await getAuthenticatedUserId();
     
     // Get all GitHub accounts
     const accounts = await getAllGitHubAccountsForBranches(userId);
+    
+    for (const account of accounts) {
+      accountKeyMap.set(sanitizeKey(account.id), account);
+    }
     
     if (accounts.length === 0) {
       // Fallback to env token
@@ -267,6 +280,18 @@ export async function GET(
     // Search for the repo across all accounts
     let repoFullName: string | null = null;
     let tokenToUse: string | null = null;
+    let repoKeyWithoutAccount = repoKey;
+    let targetedAccounts: typeof accounts = accounts;
+
+    // Try to detect if the key ends with a sanitized account identifier so we
+    // can limit the search space and recover the original repo key.
+    for (const [accountKey, account] of accountKeyMap.entries()) {
+      if (repoKey.endsWith(`-${accountKey}`)) {
+        repoKeyWithoutAccount = repoKey.slice(0, -(`${accountKey}`.length + 1));
+        targetedAccounts = [account];
+        break;
+      }
+    }
     
     // Prepare headers template
     const getHeaders = (token: string) => ({
@@ -276,15 +301,23 @@ export async function GET(
     });
     
     // Search across all accounts to find the repo
-    for (const account of accounts) {
+    const accountsToSearch = targetedAccounts;
+    for (const account of accountsToSearch) {
       try {
         const headers = getHeaders(account.encrypted_token);
         const userRepos = await fetchAllUserRepositories(account.encrypted_token, headers);
         
         // Match by sanitized full_name key (the format used in /api/repos)
         const matchedRepo = userRepos.find((r: any) => {
-          const repoKey = r.full_name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-          return repoKey === repo.toLowerCase();
+          const sanitizedFullName = sanitizeKey(r.full_name);
+          const sanitizedName = sanitizeKey(r.name);
+          const accountKey = sanitizeKey(account.id);
+          return (
+            sanitizedFullName === repoKeyWithoutAccount ||
+            sanitizedName === repoKeyWithoutAccount ||
+            `${sanitizedFullName}-${accountKey}` === repoKey ||
+            `${sanitizedName}-${accountKey}` === repoKey
+          );
         });
         
         if (matchedRepo) {
@@ -307,8 +340,15 @@ export async function GET(
           const headers = getHeaders(account.encrypted_token);
           const userRepos = await fetchAllUserRepositories(account.encrypted_token, headers);
           const matchedRepo = userRepos.find((r: any) => {
-            const repoKey = r.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-            return repoKey === repo.toLowerCase();
+            const sanitizedName = sanitizeKey(r.name);
+            const sanitizedFullName = sanitizeKey(r.full_name);
+            const accountKey = sanitizeKey(account.id);
+            return (
+              sanitizedName === repoKeyWithoutAccount ||
+              sanitizedFullName === repoKeyWithoutAccount ||
+              `${sanitizedName}-${accountKey}` === repoKey ||
+              `${sanitizedFullName}-${accountKey}` === repoKey
+            );
           });
           
           if (matchedRepo) {
@@ -323,7 +363,7 @@ export async function GET(
       
       // Last resort: try constructing from org and repo name
       if (!repoFullName) {
-        repoFullName = `${githubOrg}/${repo}`;
+        repoFullName = `${githubOrg}/${repoKeyWithoutAccount}`;
         tokenToUse = accounts[0]?.encrypted_token || getGitHubToken();
       }
     }

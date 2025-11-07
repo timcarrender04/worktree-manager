@@ -37,12 +37,21 @@ export async function POST(request: Request) {
     } catch (error: any) {
       console.error('Error generating task with Ollama:', error);
       
+      // Check if it's a model availability issue
+      const errorMessage = error.message || String(error);
+      if (errorMessage.includes('not found') || errorMessage.includes('404')) {
+        console.log('Ollama model not available, using fallback generation');
+      }
+      
       // Fallback: Simple rule-based generation
-      return NextResponse.json({
+      const fallbackTask = {
         title: generateTitleFallback(transcript, branchType),
         branchName: generateBranchNameFallback(transcript, branchType),
         description: transcript,
-      });
+      };
+      
+      console.log('Using fallback task generation:', fallbackTask);
+      return NextResponse.json(fallbackTask);
     }
   } catch (error: any) {
     console.error('Error in generate-task:', error);

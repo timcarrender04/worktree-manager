@@ -5,141 +5,79 @@ import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { getUserGitHubToken, getAuthenticatedUserId } from '@/lib/credentials/helpers';
+import { query } from '@/lib/db/client'
 
 const execAsync = promisify(exec);
 const ROOT_DIR = process.env.REPO_ROOT || '/repos';
 
-// Helper function to get all GitHub accounts for a user
-async function getAllGitHubAccounts(userId: string | null): Promise<Array<{ id: string; account_name: string; github_username: string; encrypted_token: string; from_env?: boolean }>> {
-  const accounts: Array<{ id: string; account_name: string; github_username: string; encrypted_token: string; from_env?: boolean }> = [];
-  
-  // Check if using Neon (direct database) or local dev
-  const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const isLocalDev = !isUsingNeon && (
-    process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('localhost') || 
-    process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('127.0.0.1')
-  );
+interface AccountRecord {
+  id: string
+  account_name: string
+  github_username: string | null
+  encrypted_token: string
+  source: 'account' | 'token'
+  token_name?: string
+  token_id?: string
+}
 
-  // First, check for GITHUB_TOKEN in environment variables
-  const envToken = getGitHubToken();
-  if (envToken) {
-    try {
-      const headers = {
-        'Authorization': `Bearer ${envToken}`,
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
-      const response = await fetch('https://api.github.com/user', { headers });
-      if (response.ok) {
-        const githubUser = await response.json();
-        accounts.push({
-          id: 'env-default',
-          account_name: 'Default (from .env)',
-          github_username: githubUser.login,
-          encrypted_token: envToken,
-          from_env: true,
-        });
-      }
-    } catch (error) {
-      console.warn('GITHUB_TOKEN from environment is invalid:', error);
-    }
+// Helper function to get all GitHub accounts for a user (Project Tim is source of truth)
+async function getAllGitHubAccounts(userId: string | null): Promise<AccountRecord[]> {
+  const accounts: AccountRecord[] = []
+
+  let effectiveUserId = userId
+  if (!effectiveUserId && process.env.NODE_ENV === 'development') {
+    effectiveUserId = 'dev'
   }
 
-  if (isUsingNeon || (isLocalDev && process.env.NEXT_PUBLIC_SUPABASE_URL)) {
-    // Use direct database connection for Neon or local dev
-    try {
-      if (isLocalDev && !process.env.DATABASE_URL && !process.env.PGHOST) {
-        process.env.PGHOST = 'localhost';
-        process.env.PGPORT = '5433';
-        process.env.PGUSER = 'postgres';
-        process.env.PGPASSWORD = process.env.POSTGRES_PASSWORD || 'postgres';
-        process.env.PGDATABASE = 'repo_hub';
-      }
-      
-      const { query } = await import('@/lib/db/client');
-      const targetUserId = userId || 'dev';
-      const result = await query(
-        `SELECT id, account_name, github_username, encrypted_token 
-         FROM github_accounts 
-         WHERE user_id = $1 
-         ORDER BY created_at DESC`,
-        [targetUserId]
-      );
-      
-      if (result.rows.length > 0) {
-        accounts.push(...result.rows.map((row: any) => ({
-          id: row.id,
-          account_name: row.account_name,
-          github_username: row.github_username,
-          encrypted_token: row.encrypted_token,
-        })));
-      }
-    } catch (error: any) {
-      console.warn('Error fetching GitHub accounts from database:', error.message);
-    }
-  } else {
-    // Use Supabase client for remote Supabase
-    try {
-      if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
-        const { createClient, createServiceRoleClient } = await import('@/lib/supabase/server');
-        const supabase = await createClient();
-        
-        let targetUserId = userId;
-        if (!targetUserId) {
-          const { data: { user }, error: authError } = await supabase.auth.getUser();
-          if (!authError && user) {
-            targetUserId = user.id;
-          } else if (process.env.NODE_ENV === 'development') {
-            targetUserId = 'dev';
-          }
-        }
-        
-        if (targetUserId) {
-          const { data: dbAccounts, error: dbError } = await supabase
-            .from('github_accounts')
-            .select('id, account_name, github_username, encrypted_token')
-            .eq('user_id', targetUserId)
-            .order('created_at', { ascending: false });
-
-          if (!dbError && dbAccounts) {
-            accounts.push(...dbAccounts.map((acc: any) => ({
-              id: acc.id,
-              account_name: acc.account_name,
-              github_username: acc.github_username,
-              encrypted_token: acc.encrypted_token,
-            })));
-          }
-        } else if (process.env.NODE_ENV === 'development' && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-          // Fallback: use service role client in dev mode
-          try {
-            const serviceClient = createServiceRoleClient();
-            const { data: allAccounts } = await serviceClient
-              .from('github_accounts')
-              .select('id, account_name, github_username, encrypted_token, user_id')
-              .order('created_at', { ascending: true });
-            
-            if (allAccounts && allAccounts.length > 0) {
-              // Try 'dev' user first, then any account
-              const devAccounts = allAccounts.filter((a: any) => a.user_id === 'dev');
-              const accountsToUse = devAccounts.length > 0 ? devAccounts : allAccounts;
-              accounts.push(...accountsToUse.map((acc: any) => ({
-                id: acc.id,
-                account_name: acc.account_name,
-                github_username: acc.github_username,
-                encrypted_token: acc.encrypted_token,
-              })));
-            }
-          } catch (serviceError: any) {
-            console.warn('Error using service role client:', serviceError?.message);
-          }
-        }
-      }
-    } catch (error: any) {
-      console.warn('Error accessing Supabase for GitHub accounts:', error.message);
-    }
+  if (!effectiveUserId) {
+    return accounts
   }
 
-  return accounts;
+  try {
+    const result = await query(
+      `SELECT id, account_name, github_username, encrypted_token
+       FROM github_accounts
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [effectiveUserId]
+    )
+
+    accounts.push(
+      ...result.rows.map((row: any) => ({
+        id: row.id,
+        account_name: row.account_name,
+        github_username: row.github_username,
+        encrypted_token: row.encrypted_token,
+        source: 'account' as const,
+      }))
+    )
+  } catch (error: any) {
+    console.warn('Error fetching github_accounts:', error.message)
+  }
+
+  try {
+    const tokensResult = await query(
+      `SELECT id, name, value
+       FROM tokens
+       ORDER BY created_at DESC`
+    )
+
+    for (const token of tokensResult.rows || []) {
+      accounts.push({
+        id: `token-${token.id}`,
+        account_name: token.name,
+        github_username: null,
+        encrypted_token: token.value,
+        source: 'token',
+        token_name: token.name,
+        token_id: token.id,
+      })
+    }
+  } catch (tokenError: any) {
+    console.warn('Error fetching tokens table (may not exist):', tokenError.message)
+  }
+
+  return accounts
 }
 
 // Helper function to get GitHub token from environment (.env.local) or files
@@ -214,7 +152,7 @@ function getGitHubToken(): string | null {
 
 // Helper function to fetch repos from a single account
 async function fetchReposFromAccount(
-  account: { id: string; account_name: string; github_username: string; encrypted_token: string; from_env?: boolean },
+  account: AccountRecord,
   repoMap: Map<string, any>
 ): Promise<void> {
   const headers = {
@@ -246,24 +184,27 @@ async function fetchReposFromAccount(
           // Use full_name as key to deduplicate across accounts
           // If repo already exists, keep the one with the most recent update
           const existing = repoMap.get(repo.full_name);
-          if (!existing || new Date(repo.updated_at || repo.pushed_at || 0) > new Date(existing.updated_at || existing.pushed_at || 0)) {
-            repoMap.set(repo.full_name, {
-              ...repo,
-              // Track which accounts have access to this repo
-              github_account_ids: existing?.github_account_ids 
-                ? [...new Set([...existing.github_account_ids, account.id])]
-                : [account.id],
-              github_account_names: existing?.github_account_names
-                ? [...new Set([...existing.github_account_names, account.account_name])]
-                : [account.account_name],
-            });
-          } else if (existing) {
-            // Add this account to the list if not already present
-            if (!existing.github_account_ids?.includes(account.id)) {
-              existing.github_account_ids = [...(existing.github_account_ids || []), account.id];
-              existing.github_account_names = [...(existing.github_account_names || []), account.account_name];
-            }
+          const updated = {
+            ...repo,
+            github_account_ids: existing?.github_account_ids ? [...existing.github_account_ids] : [],
+            github_account_names: existing?.github_account_names ? [...existing.github_account_names] : [],
+            github_account_sources: existing?.github_account_sources ? [...existing.github_account_sources] : [],
           }
+
+          if (!updated.github_account_ids.includes(account.id)) {
+            updated.github_account_ids.push(account.id)
+            updated.github_account_names.push(account.account_name)
+            updated.github_account_sources.push({
+              id: account.id,
+              name: account.account_name,
+              source: account.source,
+              github_username: account.github_username,
+              token_name: account.token_name,
+              token_id: account.token_id,
+            })
+          }
+
+          repoMap.set(repo.full_name, updated)
         });
         
         // Check if there are more pages
@@ -361,33 +302,33 @@ Current working directory: ${projectRoot}`;
     
     // Fetch repos from all accounts in parallel
     const repoMap = new Map<string, any>(); // Use full_name as key to deduplicate
-    
+    const accountMap = new Map<string, { id: string; name: string; github_username: string | null; source: 'account' | 'token'; token_name?: string; token_id?: string }>()
+
+    accountsToUse.forEach((account) => {
+      accountMap.set(account.id, {
+        id: account.id,
+        name: account.account_name,
+        github_username: account.github_username,
+        source: account.source,
+        token_name: account.token_name,
+        token_id: account.token_id,
+      })
+    })
+
     // Fetch repos from each account
     await Promise.all(
       accountsToUse.map(account => fetchReposFromAccount(account, repoMap))
     );
     
-    // Convert to array and sort by updated date
-    const allRepositories = Array.from(repoMap.values());
-    allRepositories.sort((a, b) => {
-      const dateA = new Date(a.updated_at || a.pushed_at || 0).getTime();
-      const dateB = new Date(b.updated_at || b.pushed_at || 0).getTime();
-      return dateB - dateA; // Descending order
-    });
-    
     // Format repositories for the frontend
-    const repos = allRepositories.map((repo: any) => {
-      const repoPath = path.join(ROOT_DIR, repo.name);
-      const gitPath = path.join(repoPath, '.git');
-      const exists = existsSync(repoPath) && existsSync(gitPath);
-      
-      // Use full_name to create a unique key to avoid duplicates from different accounts
-      // Sanitize full_name: convert to lowercase and replace non-alphanumeric with hyphens
-      // e.g., "org/repo-name" -> "org-repo-name"
-      const key = repo.full_name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-      
-      return {
-        key,
+    const accountGroups: Record<string, { account: any; repositories: any[] }> = {}
+
+    repoMap.forEach((repo) => {
+      const repoPath = path.join(ROOT_DIR, repo.name)
+      const gitPath = path.join(repoPath, '.git')
+      const exists = existsSync(repoPath) && existsSync(gitPath)
+
+      const baseRepoData = {
         name: repo.name,
         full_name: repo.full_name,
         url: repo.html_url || repo.url,
@@ -395,15 +336,80 @@ Current working directory: ${projectRoot}`;
         path: repoPath,
         description: repo.description,
         private: repo.private,
-        // Include account information
-        github_account_ids: repo.github_account_ids || [],
-        github_account_names: repo.github_account_names || [],
-      };
-    });
-    
-    console.log(`[API /repos] Fetched ${repos.length} unique repositories from ${accountsToUse.length} account(s)`);
-    
-    return NextResponse.json({ repos });
+        updated_at: repo.updated_at || repo.pushed_at,
+        owner: repo.owner?.login,
+        default_branch: repo.default_branch,
+        language: repo.language,
+      }
+
+      const associatedAccountIds: string[] = repo.github_account_ids || []
+
+      if (associatedAccountIds.length === 0) {
+        const key = 'uncategorized'
+        if (!accountGroups[key]) {
+          accountGroups[key] = {
+            account: {
+              id: key,
+              name: 'Uncategorized',
+              github_username: null,
+              source: 'account',
+            },
+            repositories: [],
+          }
+        }
+        accountGroups[key].repositories.push({
+          key: `${repo.full_name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${key}`,
+          github_account_id: key,
+          github_account_name: 'Uncategorized',
+          github_account_source: 'account',
+          ...baseRepoData,
+        })
+        return
+      }
+
+      associatedAccountIds.forEach((accountId) => {
+        const accountInfo = accountMap.get(accountId) || {
+          id: accountId,
+          name: accountId,
+          github_username: null,
+          source: 'account',
+        }
+
+        if (!accountGroups[accountId]) {
+          accountGroups[accountId] = {
+            account: accountInfo,
+            repositories: [],
+          }
+        }
+
+        const key = `${repo.full_name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${accountId.toLowerCase().replace(/[^a-z0-9]/g, '-')}`
+
+        accountGroups[accountId].repositories.push({
+          key,
+          github_account_id: accountId,
+          github_account_name: accountInfo.name,
+          github_account_source: accountInfo.source,
+          github_account_username: accountInfo.github_username,
+          token_name: accountInfo.token_name,
+          token_id: accountInfo.token_id,
+          ...baseRepoData,
+        })
+      })
+    })
+
+    Object.values(accountGroups).forEach((group) => {
+      group.repositories.sort((a, b) => {
+        const dateA = new Date(a.updated_at || 0).getTime()
+        const dateB = new Date(b.updated_at || 0).getTime()
+        return dateB - dateA
+      })
+    })
+
+    console.log(`[API /repos] Grouped repositories under ${Object.keys(accountGroups).length} account(s)`)
+
+    const flatRepos = Object.values(accountGroups).flatMap((group) => group.repositories)
+
+    return NextResponse.json({ repos: flatRepos, repoGroups: accountGroups })
     
   } catch (error: any) {
     console.error('Error in GET /api/repos:', error);

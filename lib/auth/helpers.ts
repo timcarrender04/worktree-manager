@@ -20,8 +20,12 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
  */
 export async function isSuperAdmin(userId: string): Promise<boolean> {
   try {
-    const supabase = await createClient()
-    const { data, error } = await supabase
+    // Use service role client to bypass RLS when checking super admin status
+    // This is necessary because regular clients hit RLS policies that may block access
+    const { createServiceRoleClient } = await import('@/lib/supabase/server')
+    const serviceClient = createServiceRoleClient()
+    
+    const { data, error } = await serviceClient
       .from('user_roles')
       .select('is_super_admin')
       .eq('user_id', userId)
@@ -29,13 +33,35 @@ export async function isSuperAdmin(userId: string): Promise<boolean> {
     
     if (error) {
       console.error('Error checking super admin status:', error)
-      return false
+      // Fallback to direct PostgreSQL query if Supabase fails
+      try {
+        const { query } = await import('@/lib/db/client')
+        const result = await query<{ is_super_admin: boolean }>(
+          'SELECT is_super_admin FROM user_roles WHERE user_id = $1 LIMIT 1',
+          [userId]
+        )
+        return result.rows.length > 0 && result.rows[0].is_super_admin === true
+      } catch (pgError) {
+        console.error('Error checking super admin status via PostgreSQL:', pgError)
+        return false
+      }
     }
     
     return data?.is_super_admin === true
   } catch (error) {
     console.error('Error checking super admin status:', error)
-    return false
+    // Fallback to direct PostgreSQL query
+    try {
+      const { query } = await import('@/lib/db/client')
+      const result = await query<{ is_super_admin: boolean }>(
+        'SELECT is_super_admin FROM user_roles WHERE user_id = $1 LIMIT 1',
+        [userId]
+      )
+      return result.rows.length > 0 && result.rows[0].is_super_admin === true
+    } catch (pgError) {
+      console.error('Error checking super admin status via PostgreSQL:', pgError)
+      return false
+    }
   }
 }
 

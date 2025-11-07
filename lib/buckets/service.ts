@@ -11,6 +11,13 @@ export interface BucketInfo {
   is_public: boolean
 }
 
+export interface BucketOperationResult {
+  success: boolean
+  bucket?: BucketInfo
+  error?: string
+  details?: Record<string, unknown>
+}
+
 /**
  * Sanitize a string to be a valid bucket name
  * Bucket names must be lowercase, alphanumeric with hyphens, 3-63 characters
@@ -76,7 +83,7 @@ export async function createBucketForAccount(
   accountId: string,
   accountName: string,
   userId: string
-): Promise<{ success: boolean; bucket?: BucketInfo; error?: string }> {
+): Promise<BucketOperationResult> {
   try {
     // Determine bucket type
     const bucketType = await determineBucketType(userId)
@@ -103,9 +110,24 @@ export async function createBucketForAccount(
     }
 
     if (!createResult.success) {
+      const errorMessage = createResult.error || 'Failed to create bucket'
+      const details = {
+        accountId,
+        accountName,
+        userId,
+        bucketName,
+        bucketType,
+        region,
+        upstreamService: bucketType === 's3' ? 'aws-s3' : 'supabase-storage',
+        upstreamError: createResult.error,
+      }
+
+      console.error('Bucket creation failed', details)
+
       return {
         success: false,
-        error: createResult.error || 'Failed to create bucket',
+        error: `${errorMessage} (${bucketType} bucket "${bucketName}")`,
+        details,
       }
     }
 
@@ -160,10 +182,20 @@ export async function createBucketForAccount(
 
     return { success: true, bucket: bucketInfo }
   } catch (error: any) {
-    console.error('Error creating bucket for account:', error)
+    console.error('Error creating bucket for account:', {
+      accountId,
+      userId,
+      error: error?.message,
+      stack: error?.stack,
+    })
     return {
       success: false,
-      error: error.message || 'Failed to create bucket',
+      error: `Failed to create bucket for account ${accountId}: ${error?.message || 'Unknown error'}`,
+      details: {
+        accountId,
+        accountName,
+        userId,
+      },
     }
   }
 }
@@ -301,7 +333,7 @@ export async function deleteBucketForAccount(
 export async function ensureBucketExists(
   accountId: string,
   userId: string
-): Promise<{ success: boolean; bucket?: BucketInfo; error?: string }> {
+): Promise<BucketOperationResult> {
   try {
     // Check if bucket already exists
     const existingBucket = await getBucketForAccount(accountId)
@@ -319,14 +351,35 @@ export async function ensureBucketExists(
     }
 
     // Create bucket
-    return await createBucketForAccount(accountId, account.account_name, userId)
+    const creationResult = await createBucketForAccount(accountId, account.account_name, userId)
+
+    if (!creationResult.success) {
+      console.error('Failed to ensure bucket exists', {
+        accountId,
+        userId,
+        error: creationResult.error,
+        details: creationResult.details,
+      })
+    }
+
+    return creationResult
   } catch (error: any) {
-    console.error('Error ensuring bucket exists:', error)
+    console.error('Error ensuring bucket exists:', {
+      accountId,
+      userId,
+      error: error?.message,
+      stack: error?.stack,
+    })
     return {
       success: false,
-      error: error.message || 'Failed to ensure bucket exists',
+      error: `Failed to ensure bucket exists for account ${accountId}: ${error?.message || 'Unknown error'}`,
+      details: {
+        accountId,
+        userId,
+      },
     }
   }
 }
+
 
 

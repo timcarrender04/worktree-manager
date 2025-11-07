@@ -237,3 +237,4 @@ psql -h localhost -p 5433 -U postgres -d repo_hub -f worktree-manager/lib/supaba
 Or restart your Docker containers (the migration runs automatically on first startup).
 
 
+

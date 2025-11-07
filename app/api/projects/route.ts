@@ -3,19 +3,32 @@ import { createClient } from '@/lib/supabase/server'
 import { query } from '@/lib/db/client'
 import { cookies } from 'next/headers'
 
-// Helper to get authenticated user from Supabase Auth
+// Helper to get authenticated user from session cookie
 async function getAuthenticatedUser(): Promise<{ id: string; email: string } | null> {
   try {
-    const supabase = await createClient()
-    const { data: { user }, error } = await supabase.auth.getUser()
-    
-    if (error || !user) {
+    const cookieStore = await cookies()
+    const sessionToken = cookieStore.get('wt_session')
+
+    if (!sessionToken) {
       return null
     }
 
-    return {
-      id: user.id,
-      email: user.email || '',
+    try {
+      // Decode the session token
+      const sessionData = JSON.parse(Buffer.from(sessionToken.value, 'base64').toString())
+      
+      // Check if token is expired
+      if (sessionData.exp && Date.now() > sessionData.exp) {
+        return null
+      }
+
+      return {
+        id: sessionData.userId,
+        email: sessionData.email || '',
+      }
+    } catch (error) {
+      // Invalid token
+      return null
     }
   } catch (error) {
     console.error('[DEBUG] Error getting authenticated user:', error)
@@ -33,12 +46,12 @@ export async function GET(request: Request) {
     const authenticatedUser = await getAuthenticatedUser()
     console.log('[DEBUG] /api/projects - authenticated user:', authenticatedUser?.email || 'none', 'ID:', authenticatedUser?.id || 'none')
     
-    // Check if Neon (DATABASE_URL) is configured
-    // Prioritize Neon if DATABASE_URL is set (even if Supabase is also configured)
-    const isUsingNeon = !!process.env.DATABASE_URL
+    // Check if we should use Neon or Supabase
+    // Prioritize local Supabase if detected, otherwise use Neon if DATABASE_URL is set
     const isDevelopment = process.env.NODE_ENV === 'development'
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const isLocalSupabase = supabaseUrl?.includes('localhost') || supabaseUrl?.includes('127.0.0.1') || supabaseUrl?.includes(':8002')
+    const isUsingNeon = !!process.env.DATABASE_URL && !isLocalSupabase
     
     console.log('[DEBUG] /api/projects - isUsingNeon:', isUsingNeon)
     console.log('[DEBUG] /api/projects - DATABASE_URL set:', !!process.env.DATABASE_URL)
@@ -83,7 +96,14 @@ export async function GET(request: Request) {
               ))
               FROM project_repositories pr
               WHERE pr.project_id = p.id
-            ), '[]'::jsonb) as project_repositories
+            ), '[]'::jsonb) as project_repositories,
+            COALESCE((
+              SELECT COUNT(*)
+              FROM user_chat_notifications ucn
+              WHERE ucn.project_id = p.id
+              ${authenticatedUser ? `AND ucn.user_id = $1` : 'AND FALSE'}
+              AND ucn.is_read = FALSE
+            ), 0) as unread_chat_count
           FROM projects p
           LEFT JOIN github_accounts ga ON p.github_account_id = ga.id
           LEFT JOIN project_members pm ON pm.project_id = p.id
@@ -94,8 +114,8 @@ export async function GET(request: Request) {
         
         // Filter by user if authenticated
         if (authenticatedUser) {
-          conditions.push(`(p.owner_id = $${queryParams.length + 1} OR pm.user_id = $${queryParams.length + 1})`)
           queryParams.push(authenticatedUser.id)
+          conditions.push(`(p.owner_id = $1 OR pm.user_id = $1)`)
         }
         
         // Add repository filter if provided
@@ -148,6 +168,7 @@ export async function GET(request: Request) {
             owner_id: project.owner_id,
             member_count: members.length,
             repository_count: repositories.length,
+            unread_chat_count: parseInt(project.unread_chat_count) || 0,
             created_at: project.created_at,
             updated_at: project.updated_at,
           };
@@ -208,7 +229,25 @@ export async function GET(request: Request) {
           .maybeSingle()
         
         if (error) {
-          console.warn('[DEBUG] Error checking super admin status:', error?.message)
+          console.warn('[DEBUG] Error checking super admin status via Supabase, trying direct PostgreSQL:', error?.message)
+          // Fallback to direct PostgreSQL
+          try {
+            const { query } = await import('@/lib/db/client')
+            const roleResult = await query<{ is_super_admin: boolean }>(
+              'SELECT is_super_admin FROM user_roles WHERE user_id = $1',
+              [authenticatedUser.id]
+            )
+            
+            if (roleResult.rows.length > 0 && roleResult.rows[0].is_super_admin === true) {
+              console.log('[DEBUG] User is super admin (via direct PostgreSQL) - using service role client to bypass RLS')
+              shouldUseServiceRole = true
+            } else {
+              console.log('[DEBUG] User is not super admin - using regular Supabase client')
+            }
+          } catch (pgError: any) {
+            console.warn('[DEBUG] Could not check super admin status via PostgreSQL:', pgError?.message)
+            // Continue with regular client
+          }
         } else if (data?.is_super_admin === true) {
           console.log('[DEBUG] User is super admin - using service role client to bypass RLS')
           shouldUseServiceRole = true
@@ -303,8 +342,132 @@ export async function GET(request: Request) {
 
     console.log('[DEBUG] Projects query result - count:', projects?.length || 0, 'error:', error?.message || 'none')
     if (error) {
-      console.error('[DEBUG] Error fetching projects:', error)
+      console.error('[DEBUG] Error fetching projects via Supabase:', error)
       console.error('[DEBUG] Error details:', JSON.stringify(error, null, 2))
+      
+      // If permission denied and we're using service role, fallback to direct PostgreSQL
+      if (error.message?.includes('permission denied') && shouldUseServiceRole) {
+        console.log('[DEBUG] Permission denied with service role, falling back to direct PostgreSQL')
+        try {
+          // Build query with user filter (projects user owns or is a member of)
+          let querySql = `
+            SELECT DISTINCT
+              p.id,
+              p.name,
+              p.description,
+              p.github_account_id,
+              p.owner_id,
+              p.created_at,
+              p.updated_at,
+              CASE 
+                WHEN ga.id IS NOT NULL THEN jsonb_build_object(
+                  'account_name', ga.account_name,
+                  'github_username', ga.github_username
+                )
+                ELSE NULL
+              END as github_account,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'user_id', pm.user_id,
+                  'role', pm.role
+                ))
+                FROM project_members pm
+                WHERE pm.project_id = p.id
+              ), '[]'::jsonb) as project_members,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id', pr.id,
+                  'repository_full_name', pr.repository_full_name,
+                  'github_account_id', pr.github_account_id
+                ))
+                FROM project_repositories pr
+                WHERE pr.project_id = p.id
+              ), '[]'::jsonb) as project_repositories,
+              COALESCE((
+                SELECT COUNT(*)
+                FROM user_chat_notifications ucn
+                WHERE ucn.project_id = p.id
+                ${authenticatedUser && !shouldUseServiceRole ? `AND ucn.user_id = $1` : 'AND FALSE'}
+                AND ucn.is_read = FALSE
+              ), 0) as unread_chat_count
+            FROM projects p
+            LEFT JOIN github_accounts ga ON p.github_account_id = ga.id
+            LEFT JOIN project_members pm ON pm.project_id = p.id
+          `
+          
+          const queryParams: any[] = []
+          const conditions: string[] = []
+          
+          // For super admin (shouldUseServiceRole = true), don't filter by user (get all projects)
+          // For regular users, filter by ownership or membership
+          if (authenticatedUser && !shouldUseServiceRole) {
+            queryParams.push(authenticatedUser.id)
+            conditions.push(`(p.owner_id = $1 OR pm.user_id = $1)`)
+          }
+          // If shouldUseServiceRole is true, we don't add user filter (get all projects for super admin)
+          
+          // Add repository filter if provided
+          if (repository) {
+            conditions.push(`EXISTS (
+              SELECT 1 FROM project_repositories pr
+              WHERE pr.project_id = p.id
+              AND pr.repository_full_name = $${queryParams.length + 1}
+            )`)
+            queryParams.push(repository)
+          }
+          
+          if (conditions.length > 0) {
+            querySql += ` WHERE ${conditions.join(' AND ')}`
+          }
+          
+          querySql += ` ORDER BY p.created_at DESC`
+          
+          const projectsResult = await query(querySql, queryParams)
+          
+          if (!projectsResult || !projectsResult.rows) {
+            return NextResponse.json({ projects: [] })
+          }
+          
+          // Transform the data
+          const projectsWithCounts = projectsResult.rows.map((project: any) => {
+            const members = Array.isArray(project.project_members) 
+              ? project.project_members 
+              : (typeof project.project_members === 'string' 
+                  ? JSON.parse(project.project_members) 
+                  : []);
+            const repositories = Array.isArray(project.project_repositories)
+              ? project.project_repositories
+              : (typeof project.project_repositories === 'string'
+                  ? JSON.parse(project.project_repositories)
+                  : []);
+
+            return {
+              id: project.id,
+              name: project.name,
+              description: project.description,
+              github_account_id: project.github_account_id,
+              github_account: project.github_account && project.github_account.account_name 
+                ? project.github_account 
+                : null,
+              owner_id: project.owner_id,
+              member_count: members.length,
+              repository_count: repositories.length,
+              unread_chat_count: parseInt(project.unread_chat_count) || 0,
+              created_at: project.created_at,
+              updated_at: project.updated_at,
+            };
+          });
+
+          return NextResponse.json({ projects: projectsWithCounts })
+        } catch (pgError: any) {
+          console.error('[DEBUG] Error fetching projects via direct PostgreSQL:', pgError)
+          return NextResponse.json(
+            { error: 'Failed to fetch projects', details: pgError.message },
+            { status: 500 }
+          )
+        }
+      }
+      
       return NextResponse.json(
         { error: 'Failed to fetch projects', details: error.message },
         { status: 500 }
@@ -369,6 +532,24 @@ export async function GET(request: Request) {
       })
     }
 
+    // Fetch unread chat notifications
+    const unreadChatCountsByProject: Record<string, number> = {}
+    if (authenticatedUser && projectIds.length > 0) {
+      const { data: unreadChatNotifications } = await clientToUse
+        .from('user_chat_notifications')
+        .select('project_id')
+        .in('project_id', projectIds)
+        .eq('user_id', authenticatedUser.id)
+        .eq('is_read', false)
+      
+      if (unreadChatNotifications) {
+        unreadChatNotifications.forEach((notification: any) => {
+          unreadChatCountsByProject[notification.project_id] = 
+            (unreadChatCountsByProject[notification.project_id] || 0) + 1
+        })
+      }
+    }
+
     // Transform the data to include counts and simplify structure
     const projectsWithCounts = projects.map((project: any) => ({
       id: project.id,
@@ -382,6 +563,7 @@ export async function GET(request: Request) {
       owner_id: project.owner_id,
       member_count: membersByProject[project.id]?.length || 0,
       repository_count: reposByProject[project.id]?.length || 0,
+      unread_chat_count: unreadChatCountsByProject[project.id] || 0,
       created_at: project.created_at,
       updated_at: project.updated_at,
     }))

@@ -4,6 +4,40 @@ import { deleteRemoteBranch, updateBranchStatus } from '@/lib/github/branch-util
 import { getGitHubToken } from '../../../worktrees/route';
 import { generateBranchNameFromTitle } from '@/lib/utils/branch-name';
 import { query } from '@/lib/db/client';
+import { isSuperAdmin } from '@/lib/auth/helpers';
+import { cookies } from 'next/headers';
+
+// Helper to get authenticated user from session cookie
+async function getAuthenticatedUser(): Promise<{ id: string; email: string } | null> {
+  try {
+    const cookieStore = await cookies()
+    const sessionToken = cookieStore.get('wt_session')
+
+    if (!sessionToken) {
+      return null
+    }
+
+    try {
+      // Decode the session token
+      const sessionData = JSON.parse(Buffer.from(sessionToken.value, 'base64').toString())
+      
+      // Check if token is expired
+      if (sessionData.exp && Date.now() > sessionData.exp) {
+        return null
+      }
+
+      return {
+        id: sessionData.userId,
+        email: sessionData.email,
+      }
+    } catch (error) {
+      // Invalid token
+      return null
+    }
+  } catch (error) {
+    return null
+  }
+}
 
 export async function GET(
   request: Request,
@@ -12,10 +46,130 @@ export async function GET(
   try {
     const { id } = await params;
     
-    const supabase = await createClient();
+    // Get authenticated user from cookie session
+    const user = await getAuthenticatedUser()
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    // Check if we should use Neon or Supabase (same logic as project route)
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const isLocalSupabase = supabaseUrl?.includes('localhost') || supabaseUrl?.includes('127.0.0.1') || supabaseUrl?.includes(':8002')
+    const isUsingNeon = !!process.env.DATABASE_URL && !isLocalSupabase
+
+    // Check if user is super admin
+    let adminStatus = false
+    if (isUsingNeon) {
+      // For Neon, query directly using PostgreSQL
+      try {
+        const roleResult = await query<{ is_super_admin: boolean }>(
+          'SELECT is_super_admin FROM user_roles WHERE user_id = $1 LIMIT 1',
+          [user.id]
+        )
+        adminStatus = roleResult.rows.length > 0 && roleResult.rows[0].is_super_admin === true
+      } catch (error) {
+        console.warn('Could not check super admin status via PostgreSQL:', error)
+      }
+    } else {
+      // For Supabase, use isSuperAdmin helper
+      try {
+        adminStatus = await isSuperAdmin(user.id)
+      } catch (error) {
+        console.warn('Could not check super admin status:', error)
+      }
+    }
+
+    // Determine which client to use
+    let clientToUse = await createClient()
+    
+    // If admin, use service role client to bypass RLS
+    if (adminStatus) {
+      try {
+        clientToUse = createServiceRoleClient()
+      } catch (error) {
+        console.warn('Could not create service role client, using regular client:', error)
+      }
+    } else {
+      // If not admin, verify user is project owner or member
+      if (isUsingNeon) {
+        try {
+          const projectResult = await query<{ owner_id: string }>(
+            'SELECT owner_id FROM projects WHERE id = $1 LIMIT 1',
+            [id]
+          )
+          
+          if (projectResult.rows.length === 0) {
+            return NextResponse.json(
+              { error: 'Project not found' },
+              { status: 404 }
+            )
+          }
+
+          const isOwner = projectResult.rows[0].owner_id === user.id
+          
+          if (!isOwner) {
+            // Check if user is a member
+            const memberResult = await query<{ id: string }>(
+              'SELECT id FROM project_members WHERE project_id = $1 AND user_id = $2 LIMIT 1',
+              [id, user.id]
+            )
+            
+            if (memberResult.rows.length === 0) {
+              return NextResponse.json(
+                { error: 'Access denied' },
+                { status: 403 }
+              )
+            }
+          }
+        } catch (error) {
+          console.error('Error checking project access:', error)
+          return NextResponse.json(
+            { error: 'Failed to verify access' },
+            { status: 500 }
+          )
+        }
+      } else {
+        // For Supabase, check project access
+        const supabase = await createClient()
+        const { data: project, error: projectError } = await supabase
+          .from('projects')
+          .select('owner_id')
+          .eq('id', id)
+          .single()
+
+        if (projectError || !project) {
+          return NextResponse.json(
+            { error: 'Project not found' },
+            { status: 404 }
+          )
+        }
+
+        const isOwner = project.owner_id === user.id
+        
+        if (!isOwner) {
+          // Check if user is a member
+          const { data: member } = await supabase
+            .from('project_members')
+            .select('id')
+            .eq('project_id', id)
+            .eq('user_id', user.id)
+            .maybeSingle()
+
+          if (!member) {
+            return NextResponse.json(
+              { error: 'Access denied' },
+              { status: 403 }
+            )
+          }
+        }
+      }
+    }
     
     // Get kanban board for project
-    const { data: board } = await supabase
+    const { data: board } = await clientToUse
       .from('kanban_boards')
       .select('id')
       .eq('project_id', id)
@@ -26,7 +180,7 @@ export async function GET(
     }
 
     // Get kanban items
-    const { data: items } = await supabase
+    const { data: items } = await clientToUse
       .from('kanban_items')
       .select('*')
       .eq('board_id', board.id)
@@ -140,13 +294,12 @@ export async function POST(
       try {
         const itemResult = await localPool.query(
           `INSERT INTO kanban_items (
-            board_id, project_id, title, body, branch_name, repository,
+            board_id, title, body, branch_name, repository,
             branch_type, repositories, column_id, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           RETURNING *`,
           [
             board.id,
-            id,
             title,
             itemBody || null,
             finalBranchName || null,
@@ -187,7 +340,6 @@ export async function POST(
           .from('kanban_items')
           .insert({
             board_id: board.id,
-            project_id: id,
             title,
             body: itemBody || null,
             branch_name: finalBranchName || null,

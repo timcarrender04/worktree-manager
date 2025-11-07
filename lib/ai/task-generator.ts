@@ -22,12 +22,14 @@ export async function generateTaskFromVoice(
   const ollamaServer = process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || '192.168.1.223:11434';
   // Add http:// if not present
   const ollamaBaseUrl = ollamaServer.startsWith('http') ? ollamaServer : `http://${ollamaServer}`;
-  const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.2';
+  const ollamaModel = process.env.OLLAMA_MODEL || 'mistral';
 
   const model = new ChatOllama({
     baseUrl: ollamaBaseUrl,
     model: ollamaModel,
     temperature: 0.7,
+    // Note: If generation is slow, check if Ollama is using GPU
+    // Run: nvidia-smi on the Ollama server to verify GPU usage
   });
 
   const branchTypeDescriptions = {
@@ -37,49 +39,82 @@ export async function generateTaskFromVoice(
     qaqc: 'QA/QC (Quality Assurance/Quality Control)',
   };
 
+  const branchTypePrefix = `${branchType}-`;
+  const branchTypeLabel = `${branchTypeDescriptions[branchType]} (${branchType})`;
+
   const prompt = ChatPromptTemplate.fromTemplate(`You are a project manager creating a task from a developer's voice description.
 
-Your job is to:
-1. Create a clear, concise task title (max 100 characters)
-2. Generate a SHORT branch name in kebab-case format (MAX 30 characters total, including prefix)
-3. Write a detailed task description for the kanban board
+## Task Requirements
 
-CRITICAL: The branch name MUST be SHORT and TO THE POINT:
-- Start with the branch type prefix: ${branchType}-
-- Maximum 30 characters TOTAL (including the "${branchType}-" prefix)
-- Use ONLY the essential keywords (2-4 words max)
-- Remove articles, prepositions, and filler words
-- Be specific but brief
-- Use kebab-case (lowercase with hyphens)
-- No special characters except hyphens
+**Task Title:**
+- Clear, actionable title (max 100 characters)
+- Start with a verb when possible (e.g., "Implement", "Fix", "Add")
 
-Examples of GOOD short branch names:
-- "feat-oauth-login" (not "feat-implement-google-oauth-login")
-- "fix-auth-error" (not "fix-authentication-error-handling")
-- "bugs-memory-leak" (not "bugs-fix-memory-leak-in-component")
-- "qaqc-test-coverage" (not "qaqc-improve-test-coverage")
+**Branch Name:**
+- Format: ${branchTypePrefix}[2-4-keywords]
+- MAX 30 characters total (including "${branchTypePrefix}" prefix)
+- Use ONLY essential keywords - remove articles, prepositions, and filler words
+- Kebab-case only (lowercase with hyphens)
+- Be specific but concise
 
-The task description should be professional and include:
-- What needs to be done
-- Why it's needed (if clear from context)
-- Any relevant details
+**Task Description:**
+- What needs to be done (clear action items)
+- Why it's needed (if mentioned in transcript)
+- Any technical details or constraints
+- Acceptance criteria (if applicable)
+
+## Branch Name Examples
+
+✅ GOOD (concise, clear):
+- ${branchTypePrefix}oauth-login (not "implement-google-oauth-login-feature")
+- ${branchTypePrefix}auth-error (not "fix-authentication-error-handling-issue")
+- ${branchTypePrefix}api-timeout (not "increase-api-timeout-value")
+- ${branchTypePrefix}user-avatar (not "add-user-avatar-upload-feature")
+
+❌ AVOID (too long, unnecessary words):
+- ${branchTypePrefix}implement-new-feature
+- ${branchTypePrefix}fix-the-bug-in-component
+- ${branchTypePrefix}update-and-refactor-code
+
+## Input Context
 
 Voice transcript: {transcript}
-Branch type: ${branchTypeDescriptions[branchType]} (${branchType})
+Branch type: ${branchTypeLabel}
 
-Generate the task title, SHORT branch name, and description. Return ONLY valid JSON in this format:
+## Output Format
+
+Return ONLY valid JSON (no markdown, no extra text):
+
 {{
-  "title": "Task title here",
-  "branchName": "${branchType}-short-name",
-  "description": "Full task description here"
+  "title": "Action-oriented task title",
+  "branchName": "${branchTypePrefix}short-descriptive-name",
+  "description": "Detailed description with context, requirements, and any relevant technical details or acceptance criteria."
 }}`);
 
   const chain = prompt.pipe(model as any).pipe(parser);
 
   try {
-    const result = await chain.invoke({
-      transcript: voiceTranscript,
+    console.log(`[AI] Starting task generation with model: ${ollamaModel} at ${ollamaBaseUrl}`);
+    const startTime = Date.now();
+    
+    // Add timeout wrapper (60 seconds for 7B model - should be enough even on CPU)
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('AI generation timeout after 60 seconds')), 60000);
     });
+    
+    const result = await Promise.race([
+      chain.invoke({
+        transcript: voiceTranscript,
+      }),
+      timeoutPromise,
+    ]);
+    
+    const duration = Date.now() - startTime;
+    console.log(`[AI] Task generation completed in ${duration}ms (${(duration / 1000).toFixed(2)}s)`);
+    
+    if (duration > 10000) {
+      console.warn(`[AI] WARNING: Generation took ${(duration / 1000).toFixed(2)}s. This suggests the model may not be using GPU. Check Ollama server GPU configuration.`);
+    }
 
     // Validate and sanitize the branch name - keep it SHORT
     let sanitizedBranchName = result.branchName
@@ -122,8 +157,18 @@ Generate the task title, SHORT branch name, and description. Return ONLY valid J
       branchName: sanitizedBranchName,
     };
   } catch (error) {
-    console.error('Error generating task:', error);
-    throw new Error(`Failed to generate task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Error generating task with Ollama:', error);
+    
+    // Check if it's a model not found error
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('not found') || errorMessage.includes('404')) {
+      console.warn(`Ollama model "${ollamaModel}" not found. Available models: mistral, llama2, codellama, medllama2. Using fallback generation.`);
+      // Don't throw - let the caller handle fallback
+      throw new Error(`Model "${ollamaModel}" not found on Ollama server. Please check available models or set OLLAMA_MODEL environment variable.`);
+    }
+    
+    // For other errors, provide more context
+    throw new Error(`Failed to generate task: ${errorMessage}. Check Ollama server at ${ollamaBaseUrl} is running and accessible.`);
   }
 }
 
@@ -141,12 +186,14 @@ export async function generateBranchNameFromContext(
   const ollamaServer = process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || '192.168.1.223:11434';
   // Add http:// if not present
   const ollamaBaseUrl = ollamaServer.startsWith('http') ? ollamaServer : `http://${ollamaServer}`;
-  const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.2';
+  const ollamaModel = process.env.OLLAMA_MODEL || 'mistral';
 
   const model = new ChatOllama({
     baseUrl: ollamaBaseUrl,
     model: ollamaModel,
     temperature: 0.7,
+    // Note: If generation is slow, check if Ollama is using GPU
+    // Run: nvidia-smi on the Ollama server to verify GPU usage
   });
 
   // Fetch context from NeonDB
@@ -227,14 +274,32 @@ Examples of GOOD short branch names:
 Generate a new ${branchTypeDescriptions[branchType]} branch name that follows these patterns. Return ONLY the branch name (e.g., "${branchType}-example-name"), nothing else.`);
 
   try {
+    console.log(`[AI] Starting branch name generation with model: ${ollamaModel} at ${ollamaBaseUrl}`);
+    const startTime = Date.now();
+    
+    // Add timeout wrapper (30 seconds for branch name generation)
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('AI generation timeout after 30 seconds')), 30000);
+    });
+    
     const chain = prompt.pipe(model as any);
-    const result = await chain.invoke({});
+    const result = await Promise.race([
+      chain.invoke({}),
+      timeoutPromise,
+    ]);
+    
+    const duration = Date.now() - startTime;
+    console.log(`[AI] Branch name generation completed in ${duration}ms (${(duration / 1000).toFixed(2)}s)`);
+    
+    if (duration > 5000) {
+      console.warn(`[AI] WARNING: Generation took ${(duration / 1000).toFixed(2)}s. This suggests the model may not be using GPU. Check Ollama server GPU configuration.`);
+    }
 
     // Extract branch name from response (handles both string and object responses)
     let generatedName = '';
     if (typeof result === 'string') {
       generatedName = result.trim();
-    } else if (result && typeof result.content === 'string') {
+    } else if (result && typeof result === 'object' && 'content' in result && typeof result.content === 'string') {
       generatedName = result.content.trim();
     } else {
       generatedName = String(result).trim();
@@ -287,7 +352,14 @@ Generate a new ${branchTypeDescriptions[branchType]} branch name that follows th
 
     return sanitizedBranchName;
   } catch (error) {
-    console.error('Error generating branch name:', error);
+    console.error('Error generating branch name with Ollama:', error);
+    
+    // Check if it's a model not found error
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('not found') || errorMessage.includes('404')) {
+      console.warn(`Ollama model "${ollamaModel}" not found. Using fallback branch name generation.`);
+    }
+    
     // Fallback: generate a simple timestamp-based name
     return `${branchType}-${Date.now().toString().slice(-6)}`;
   }

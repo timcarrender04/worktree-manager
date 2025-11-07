@@ -1,3 +1,4 @@
+import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { createGitHubClient } from '@/lib/github/client'
 import { query } from '@/lib/db/client'
@@ -418,22 +419,46 @@ export async function validateAWSCredentials(
  */
 export async function getAuthenticatedUserId(): Promise<string | null> {
   try {
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL
+    const hasSupabaseEnv =
+      !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-    if (isUsingNeon) {
-      // For Neon, we need to implement authentication differently
-      // This is a placeholder - actual implementation depends on your auth system
-      return null
-    } else {
-      const supabase = await createClient()
-      const {
-        data: { user },
-        error,
-      } = await supabase.auth.getUser()
+    if (hasSupabaseEnv) {
+      try {
+        const supabase = await createClient()
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser()
 
-      if (error || !user) return null
-      return user.id
+        if (!error && user?.id) {
+          return user.id
+        }
+      } catch (supabaseError) {
+        console.warn('getAuthenticatedUserId: Supabase auth lookup failed, falling back to cookies', supabaseError)
+      }
     }
+
+    // Fallback to custom wt_session cookie (used when Supabase is not configured)
+    try {
+      const cookieStore = await cookies()
+      const sessionCookie = cookieStore.get('wt_session')
+
+      if (sessionCookie?.value) {
+        const decoded = JSON.parse(Buffer.from(sessionCookie.value, 'base64').toString())
+
+        if (decoded?.exp && Date.now() > decoded.exp) {
+          return null
+        }
+
+        if (decoded?.userId && typeof decoded.userId === 'string') {
+          return decoded.userId
+        }
+      }
+    } catch (cookieError) {
+      console.warn('getAuthenticatedUserId: Failed to read wt_session cookie', cookieError)
+    }
+
+    return null
   } catch (error) {
     console.error('Error getting authenticated user:', error)
     return null

@@ -108,9 +108,7 @@ export async function query<T = any>(
     const res = await pool.query(text, params)
     const duration = Date.now() - start
     
-    if (process.env.NODE_ENV === 'development' || duration > 1000) {
-      console.log('Executed query', { text: text.substring(0, 50), duration, rows: res.rowCount ?? 0 })
-    }
+    // Query logging removed
     
     return {
       rows: res.rows,

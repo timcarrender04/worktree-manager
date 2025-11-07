@@ -16,3 +16,4 @@ GRANT EXECUTE ON FUNCTION graphql.resolve TO anon, authenticated, service_role;
 -- Or through Kong at http://localhost:8002/graphql/v1
 
 
+
