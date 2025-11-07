@@ -56,7 +56,7 @@ export function VoiceTaskCreator({ projectId: initialProjectId, repositories, on
           const response = await fetch(`/api/projects?repository=${encodeURIComponent(repoFullName)}`);
           if (response.ok) {
             const data = await response.json();
-            const projectIds = new Set((data.projects || []).map((p: Project) => p.id));
+            const projectIds = new Set<string>((data.projects || []).map((p: Project) => p.id));
             projectSets.push(projectIds);
           }
         }
@@ -200,10 +200,15 @@ export function VoiceTaskCreator({ projectId: initialProjectId, repositories, on
       }));
 
       // Extract repo names from full names for worktree API
+      // Try to use the repository name part (after the last /) and convert to key format
+      // The worktrees API will try multiple matching strategies to find the repo
       const repoNames = selectedRepos.map(repoFullName => {
+        // Extract repo name from full name (owner/repo-name -> repo-name)
         const repoName = repoFullName.split('/').pop() || repoFullName;
-        // Convert to key format (sanitize)
-        return repoName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+        // Convert to key format (sanitize: lowercase, replace non-alphanumeric with hyphens)
+        const repoKey = repoName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+        console.log(`[VoiceTaskCreator] Converting repo: ${repoFullName} -> ${repoKey}`);
+        return repoKey;
       });
 
       // Create baseBranches map with repo keys
@@ -213,40 +218,48 @@ export function VoiceTaskCreator({ projectId: initialProjectId, repositories, on
         baseBranchesMap[repoKey] = baseBranches[repoFullName] || 'dev';
       });
 
+      const branchNameWithoutPrefix = aiGenerated.branchName.replace(`${selectedType}-`, '');
+
+      const selectedRepoMetadata = repoNames.map((repoKey, index) => {
+        const fullName = selectedRepos[index];
+        const projectRepoMatch = repositories.find((repo) => repo.repository_full_name.toLowerCase() === fullName.toLowerCase());
+        return {
+          repoKey,
+          fullName,
+          projectRepositoryId: projectRepoMatch?.id || null,
+        };
+      });
+
+      const worktreeRequest = {
+        projectId: effectiveProjectId,
+        repos: repoNames,
+        type: selectedType,
+        name: branchNameWithoutPrefix,
+        baseBranches: baseBranchesMap,
+        selectedRepoMetadata,
+        kanban: {
+          title: aiGenerated.title,
+          description: aiGenerated.description,
+          columnId: 'backlog',
+          source: 'ai',
+        },
+      };
+      
+      console.log('[VoiceTaskCreator] Creating worktrees with request:', worktreeRequest);
+
       const worktreeResponse = await fetch('/api/worktrees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repos: repoNames,
-          type: selectedType,
-          name: aiGenerated.branchName.replace(`${selectedType}-`, ''), // Remove prefix as worktree API adds it
-          baseBranches: baseBranchesMap,
-        }),
+        body: JSON.stringify(worktreeRequest),
       });
 
       if (!worktreeResponse.ok) {
         const errorData = await worktreeResponse.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to create worktrees');
-      }
-
-      // Create kanban item
-      const kanbanResponse = await fetch(`/api/projects/${effectiveProjectId}/kanban-items`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: aiGenerated.title,
-          body: aiGenerated.description,
-          branch_name: aiGenerated.branchName,
-          repository: selectedRepos[0], // Primary repository
-          repositories: selectedRepos,
-          branch_type: selectedType,
-          column_id: 'backlog',
-        }),
-      });
-
-      if (!kanbanResponse.ok) {
-        const errorData = await kanbanResponse.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to create kanban item');
+        console.error('[VoiceTaskCreator] Worktree creation failed:', errorData);
+        const errorMessage = errorData.error || 'Failed to create worktrees';
+        const details = errorData.details ? ` ${errorData.details}` : '';
+        const availableRepos = errorData.availableRepos ? ` Available repos: ${errorData.availableRepos.join(', ')}` : '';
+        throw new Error(`${errorMessage}${details}${availableRepos}`);
       }
 
       // Reset form

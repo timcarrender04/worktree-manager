@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { generateTaskFromVoice } from '@/lib/ai/task-generator';
-import { query } from '@/lib/db/client';
 
 export async function POST(request: Request) {
   try {
@@ -42,55 +41,21 @@ export async function POST(request: Request) {
       );
     }
 
-    // Check if Neon (DATABASE_URL) is configured
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
+    // Supabase path (with auth)
+    const supabase = await createClient();
 
-    if (isUsingNeon) {
-      // For Neon, verify project exists directly (skip auth)
-      try {
-        const projectResult = await query(`
-          SELECT id FROM projects WHERE id = $1
-        `, [projectId]);
+    // Verify project exists
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id, github_account_id')
+      .eq('id', projectId)
+      .single();
 
-        if (projectResult.rows.length === 0) {
-          return NextResponse.json(
-            { error: 'Project not found' },
-            { status: 404 }
-          );
-        }
-      } catch (error: any) {
-        console.error('Error verifying project in Neon:', error);
-        return NextResponse.json(
-          { error: 'Project not found' },
-          { status: 404 }
-        );
-      }
-    } else {
-      // Supabase path (with auth)
-      const supabase = await createClient();
-
-      // Get authenticated user
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) {
-        return NextResponse.json(
-          { error: 'Unauthorized' },
-          { status: 401 }
-        );
-      }
-
-      // Verify user has access to the project
-      const { data: project, error: projectError } = await supabase
-        .from('projects')
-        .select('id')
-        .eq('id', projectId)
-        .single();
-
-      if (projectError || !project) {
-        return NextResponse.json(
-          { error: 'Project not found' },
-          { status: 404 }
-        );
-      }
+    if (projectError || !project) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      );
     }
 
     // Step 1: Generate task from voice input using AI (Ollama)
@@ -108,7 +73,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // Step 2: Create worktrees for all repositories
+    // Step 2: Get project's GitHub account ID (already fetched above)
+    const githubAccountId = project.github_account_id || undefined;
+
+    // Step 3: Create worktrees for all repositories
     const worktreeResults = [];
     const worktreeErrors = [];
     
@@ -122,15 +90,22 @@ export async function POST(request: Request) {
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
           (request.headers.get('host') ? `http://${request.headers.get('host')}` : 'http://localhost:3000');
         
+        const worktreeBody: any = {
+          repos: [repoName],
+          type: branchType,
+          name: task.branchName.replace(`${branchType}-`, ''), // Remove prefix as worktree API adds it
+          baseBranches: { [repoName]: repo.baseBranch || 'dev' },
+        };
+        
+        // Add github_account_id if available
+        if (githubAccountId) {
+          worktreeBody.github_account_id = githubAccountId;
+        }
+        
         const worktreeResponse = await fetch(`${baseUrl}/api/worktrees`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            repos: [repoName],
-            type: branchType,
-            name: task.branchName.replace(`${branchType}-`, ''), // Remove prefix as worktree API adds it
-            baseBranches: { [repoName]: repo.baseBranch || 'dev' },
-          }),
+          body: JSON.stringify(worktreeBody),
         });
 
         const worktreeData = await worktreeResponse.json();
@@ -154,98 +129,51 @@ export async function POST(request: Request) {
       }
     }
 
-    // Step 3: Create kanban item
+    // Step 4: Create kanban item
     let kanbanItem;
     try {
-      if (isUsingNeon) {
-        // For Neon, use direct PostgreSQL queries
-        // Get or create kanban board
-        let boardResult = await query(`
-          SELECT id FROM kanban_boards WHERE project_id = $1
-        `, [projectId]);
+      // Get or create kanban board
+      let { data: board, error: boardError } = await supabase
+        .from('kanban_boards')
+        .select('id')
+        .eq('project_id', projectId)
+        .maybeSingle();
 
-        let boardId: string;
-        if (boardResult.rows.length === 0) {
-          const createResult = await query(`
-            INSERT INTO kanban_boards (project_id) VALUES ($1) RETURNING id
-          `, [projectId]);
-          if (!createResult || createResult.rows.length === 0) {
-            throw new Error('Failed to create kanban board');
-          }
-          boardId = createResult.rows[0].id;
-        } else {
-          boardId = boardResult.rows[0].id;
-        }
-
-        // Create kanban item
-        const insertResult = await query(`
-          INSERT INTO kanban_items (
-            board_id, project_id, title, body, branch_name, 
-            repositories, branch_type, repository, column_id, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          RETURNING *
-        `, [
-          boardId,
-          projectId,
-          task.title,
-          task.description,
-          task.branchName,
-          JSON.stringify(repositories.map((r: any) => r.repository_full_name)),
-          branchType,
-          repositories[0].repository_full_name,
-          'backlog',
-          'backlog',
-        ]);
-
-        kanbanItem = insertResult.rows[0];
-      } else {
-        // Supabase path
-        const supabase = await createClient();
-        
-        // Get or create kanban board
-        let { data: board, error: boardError } = await supabase
+      if (boardError || !board) {
+        const { data: newBoard, error: createError } = await supabase
           .from('kanban_boards')
+          .insert({ project_id: projectId })
           .select('id')
-          .eq('project_id', projectId)
           .single();
 
-        if (boardError || !board) {
-          const { data: newBoard, error: createError } = await supabase
-            .from('kanban_boards')
-            .insert({ project_id: projectId })
-            .select('id')
-            .single();
-
-          if (createError || !newBoard) {
-            throw new Error('Failed to create kanban board');
-          }
-          board = newBoard;
+        if (createError || !newBoard) {
+          throw new Error('Failed to create kanban board');
         }
-
-        // Create kanban item
-        const { data: item, error: insertError } = await supabase
-          .from('kanban_items')
-          .insert({
-            board_id: board.id,
-            project_id: projectId,
-            title: task.title,
-            body: task.description,
-            branch_name: task.branchName,
-            repositories: repositories.map((r: any) => r.repository_full_name),
-            branch_type: branchType,
-            repository: repositories[0].repository_full_name, // Legacy field
-            column_id: 'backlog',
-            status: 'backlog',
-          })
-          .select()
-          .single();
-
-        if (insertError) {
-          throw new Error(`Failed to create kanban item: ${insertError.message}`);
-        }
-
-        kanbanItem = item;
+        board = newBoard;
       }
+
+      // Create kanban item
+      const { data: item, error: insertError } = await supabase
+        .from('kanban_items')
+        .insert({
+          board_id: board.id,
+          title: task.title,
+          body: task.description,
+          branch_name: task.branchName,
+          repositories: repositories.map((r: any) => r.repository_full_name),
+          branch_type: branchType,
+          repository: repositories[0].repository_full_name, // Legacy field
+          column_id: 'backlog',
+          status: 'backlog',
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        throw new Error(`Failed to create kanban item: ${insertError.message}`);
+      }
+
+      kanbanItem = item;
     } catch (error: any) {
       console.error('Error creating kanban item:', error);
       return NextResponse.json(

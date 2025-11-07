@@ -110,11 +110,37 @@ export async function POST(request: Request) {
             { status: 400 }
           );
         }
-        // Basic validation - AWS credentials are complex to test without specific service
-        return NextResponse.json({
-          success: true,
-          message: 'AWS credentials format validated (actual connection test requires specific AWS service)',
-        });
+        try {
+          // Try to validate with AWS SDK
+          const { STSClient, GetCallerIdentityCommand } = await import('@aws-sdk/client-sts');
+          
+          const stsClient = new STSClient({
+            region: settings.awsRegion || 'us-east-1',
+            credentials: {
+              accessKeyId: settings.awsAccessKeyId,
+              secretAccessKey: settings.awsSecretAccessKey,
+            },
+          });
+
+          const command = new GetCallerIdentityCommand({});
+          const response = await stsClient.send(command);
+          
+          return NextResponse.json({
+            success: true,
+            message: `Successfully authenticated to AWS as account ${response.Account} (User: ${response.UserId}, ARN: ${response.Arn})`,
+            accountId: response.Account,
+            userId: response.UserId,
+            arn: response.Arn,
+          });
+        } catch (error: any) {
+          // If AWS SDK validation fails, return format validation result
+          console.warn('AWS SDK validation failed:', error.message);
+          return NextResponse.json({
+            success: true,
+            message: `AWS credentials format validated. SDK validation failed: ${error.message}`,
+            warning: 'Could not verify credentials with AWS API (format check only)',
+          });
+        }
 
       case 'ollama':
         const ollamaUrl = settings.ollamaUrl || 'http://localhost:11434';

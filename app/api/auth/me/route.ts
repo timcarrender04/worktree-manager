@@ -1,37 +1,35 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { getUserRole } from '@/lib/auth/helpers'
+import { cookies } from 'next/headers'
 
 export async function GET() {
   try {
-    const supabase = await createClient()
-    
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    const cookieStore = await cookies()
+    const sessionToken = cookieStore.get('wt_session')
+
+    if (!sessionToken) {
+      return NextResponse.json({ user: null })
     }
 
-    // Get user role
-    const role = await getUserRole(user.id)
+    try {
+      // Decode the session token
+      const sessionData = JSON.parse(Buffer.from(sessionToken.value, 'base64').toString())
 
-    return NextResponse.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        ...role
+      // Check if token is expired
+      if (sessionData.exp && Date.now() > sessionData.exp) {
+        return NextResponse.json({ user: null })
       }
-    })
-  } catch (error: any) {
-    console.error('Error getting user info:', error)
-    return NextResponse.json(
-      { error: 'Failed to get user information' },
-      { status: 500 }
-    )
+
+      return NextResponse.json({
+        user: {
+          id: sessionData.userId,
+          email: sessionData.email,
+        },
+      })
+    } catch (error) {
+      // Invalid token
+      return NextResponse.json({ user: null })
+    }
+  } catch (error) {
+    return NextResponse.json({ user: null })
   }
 }
-
-

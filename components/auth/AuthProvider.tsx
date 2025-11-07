@@ -1,11 +1,8 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
-// import { createClient } from '@/lib/supabase/client'
-// import type { User } from '@supabase/supabase-js'
-
-// Supabase disabled - using mock types
-type User = any // type User = User from '@supabase/supabase-js'
+import { useRouter, usePathname } from 'next/navigation'
+import type { User } from '@supabase/supabase-js'
 
 type AuthContextType = {
   user: User | null
@@ -15,7 +12,7 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  loading: false, // Set to false since we're not loading anything
+  loading: true,
   signOut: async () => {},
 })
 
@@ -28,36 +25,109 @@ export function useAuth() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Dev mode: always provide a mock user
-  const [user, setUser] = useState<User | null>({ id: 'dev-user', email: 'dev@example.com' })
-  const [loading, setLoading] = useState(false) // No loading needed
-  
-  // const supabase = createClient()
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const pathname = usePathname()
 
   useEffect(() => {
-    // Supabase disabled - no auth session management
     // Get initial session
-    // supabase.auth.getSession().then(({ data: { session } }) => {
-    //   setUser(session?.user ?? null)
-    //   setLoading(false)
-    // })
+    const getSession = async () => {
+      setLoading(true)
+      try {
+        // Check for session cookie first (from our custom signin)
+        const response = await fetch('/api/auth/me', {
+          credentials: 'include', // Important: include cookies
+          cache: 'no-store', // Ensure we don't get cached responses
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          console.log('AuthProvider: /api/auth/me response:', data)
+          
+          if (data.user) {
+            // Create a user object from the session data
+            const userObj = {
+              id: data.user.id,
+              email: data.user.email,
+              // Add other required User properties
+            } as User
+            console.log('AuthProvider: Setting user from session:', userObj.email)
+            setUser(userObj)
+            setLoading(false)
+            return
+          }
+        } else {
+          console.log('AuthProvider: /api/auth/me returned non-OK status:', response.status)
+        }
+      } catch (error) {
+        console.error('AuthProvider: Error checking session:', error)
+      }
 
-    // Listen for auth changes
-    // const {
-    //   data: { subscription },
-    // } = supabase.auth.onAuthStateChange((_event, session) => {
-    //   setUser(session?.user ?? null)
-    //   setLoading(false)
-    // })
+      // No session found from cookie, clear user
+      console.log('AuthProvider: No session found, clearing user')
+      setUser(null)
+      setLoading(false)
+      
+      // If we're on a protected route, redirect to login
+      const protectedRoutes = ['/projects', '/settings', '/']
+      const isProtectedRoute = protectedRoutes.some(route => 
+        pathname === route || (route !== '/' && pathname?.startsWith(route))
+      )
+      
+      if (isProtectedRoute && pathname !== '/auth/login') {
+        console.log('AuthProvider: On protected route without session, redirecting to login')
+        router.push('/auth/login')
+      }
+      
+      return
+    }
 
-    // return () => subscription.unsubscribe()
-    setLoading(false)
-  }, []) // Empty dependency array since we're not using supabase
+    getSession()
+
+    // Listen for custom auth:signin event to refetch session after login
+    const handleSignIn = async () => {
+      console.log('AuthProvider: Received auth:signin event, refetching session...')
+      // Add a small delay to ensure cookie is set
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await getSession()
+    }
+
+    window.addEventListener('auth:signin', handleSignIn)
+
+    return () => {
+      window.removeEventListener('auth:signin', handleSignIn)
+    }
+  }, [pathname, router])
+
+  // Redirect to login if on protected route without user (after loading completes)
+  useEffect(() => {
+    const protectedRoutes = ['/projects', '/settings', '/']
+    const isProtectedRoute = protectedRoutes.some(route => 
+      pathname === route || (route !== '/' && pathname?.startsWith(route))
+    )
+    
+    if (!loading && !user && isProtectedRoute && pathname && pathname !== '/auth/login') {
+      console.log('AuthProvider: No user on protected route, redirecting to login')
+      router.push('/auth/login')
+    }
+  }, [pathname, user, loading, router])
 
   const signOut = async () => {
-    // await supabase.auth.signOut()
-    // In dev mode, keep user logged in (just for dev convenience)
-    // setUser(null)
+    try {
+      // Clear our custom session cookie
+      await fetch('/api/auth/signout', { method: 'POST', credentials: 'include' })
+      
+      setUser(null)
+      // Redirect to login page
+      router.push('/auth/login')
+      router.refresh()
+    } catch (error) {
+      console.error('Error signing out:', error)
+      // Still clear local state and redirect
+      setUser(null)
+      router.push('/auth/login')
+    }
   }
 
   return (
@@ -66,4 +136,3 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     </AuthContext.Provider>
   )
 }
-

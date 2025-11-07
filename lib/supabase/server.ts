@@ -39,9 +39,18 @@ export async function createClient() {
 // Service role client for admin operations (use with caution)
 // This bypasses RLS and should only be used in server-side admin operations
 export function createServiceRoleClient() {
-  return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!serviceRoleKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY must be set to perform service role operations')
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+
+  if (!supabaseUrl) {
+    throw new Error('NEXT_PUBLIC_SUPABASE_URL must be set to initialize Supabase client')
+  }
+
+  return createSupabaseClient(supabaseUrl, serviceRoleKey)
 }
 

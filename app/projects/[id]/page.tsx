@@ -1,9 +1,9 @@
 'use client';
 
+import React from 'react';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { KanbanBoard } from '@/components/kanban/KanbanBoard';
-import { VoiceTaskCreator } from '@/components/VoiceTaskCreator';
 import { RoadmapView } from '@/components/roadmap/RoadmapView';
 import { InsightsView } from '@/components/insights/InsightsView';
 import { TeamItemsTab } from '@/components/projects/TeamItemsTab';
@@ -36,8 +36,9 @@ interface Project {
 
 type Tab = 'backlog' | 'roadmap' | 'insights' | 'team-items' | 'my-items' | 'repositories' | 'members' | 'overview';
 
-export default function ProjectDetailPage({ params }: { params: { id: string } }) {
-  return <ProjectDetailContent projectId={params.id} />;
+export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = React.use(params);
+  return <ProjectDetailContent projectId={id} />;
 }
 
 function ProjectDetailContent({ projectId }: { projectId: string }) {
@@ -54,18 +55,22 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
   const fetchProjectDetails = async () => {
     try {
       setLoading(true);
+      setError(null);
       const response = await fetch(`/api/projects/${projectId}`);
-      if (!response.ok) throw new Error('Failed to fetch project details');
-      const data = await response.json();
-      setProject(data.project);
-      
-      // Fetch kanban board ID
-      const boardResponse = await fetch(`/api/projects/${projectId}/kanban`);
-      if (boardResponse.ok) {
-        setBoardId(projectId); // Using projectId as board identifier
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch project details (${response.status})`);
       }
+      const data = await response.json();
+      if (!data.project) {
+        throw new Error('Project data not found in response');
+      }
+      setProject(data.project);
+      // Set boardId directly to projectId since the component uses it as identifier
+      setBoardId(projectId);
     } catch (error: any) {
       setError(error.message || 'Failed to load project details');
+      setProject(null);
     } finally {
       setLoading(false);
     }
@@ -82,7 +87,14 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
   if (!project) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-xl text-red-600">Project not found or access denied.</div>
+        <div className="max-w-2xl mx-auto px-4">
+          <div className="text-xl text-red-600 mb-4">
+            {error || 'Project not found or access denied.'}
+          </div>
+          <Link href="/projects" className="text-blue-600 hover:text-blue-800 underline">
+            ← Back to Projects
+          </Link>
+        </div>
       </div>
     );
   }
@@ -194,28 +206,12 @@ function ProjectDetailContent({ projectId }: { projectId: string }) {
           </div>
 
           <div className="p-6">
-            {activeTab === 'backlog' && (
-              <div className="space-y-6">
-                <div className="mb-6">
-                  <VoiceTaskCreator
-                    projectId={projectId}
-                    repositories={project.repositories.map(r => ({
-                      id: r.id,
-                      repository_full_name: r.repository_full_name,
-                    }))}
-                    onTaskCreated={() => {
-                      fetchProjectDetails();
-                    }}
-                  />
-                </div>
-                {boardId && (
-                  <KanbanBoard
-                    boardId={boardId}
-                    projectId={projectId}
-                    onItemMoved={fetchProjectDetails}
-                  />
-                )}
-              </div>
+            {activeTab === 'backlog' && boardId && (
+              <KanbanBoard
+                boardId={boardId}
+                projectId={projectId}
+                onItemMoved={fetchProjectDetails}
+              />
             )}
             {activeTab === 'roadmap' && (
               <RoadmapView projectId={projectId} />

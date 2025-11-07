@@ -6,6 +6,9 @@ import { BulkImport } from '../components/Settings/BulkImport';
 import { ServiceToggle } from '../components/Settings/ServiceToggle';
 import { OsSettings } from '../components/Settings/OsSettings';
 import { WelcomeModal } from '../components/Settings/WelcomeModal';
+import { AWSCredentialsManager } from '../components/Settings/AWSCredentialsManager';
+import { GitHubAccountsManager } from '../components/Settings/GitHubAccountsManager';
+import { LogsViewer } from '../components/Settings/LogsViewer';
 
 interface EnvVar {
   key: string;
@@ -39,7 +42,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'services' | 'os'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'services' | 'credentials' | 'github' | 'os' | 'logs'>('general');
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const isInitialLoad = useRef(true);
 
@@ -305,6 +308,26 @@ export default function SettingsPage() {
               Service Configs
             </button>
             <button
+              onClick={() => setActiveTab('credentials')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'credentials'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Credentials
+            </button>
+            <button
+              onClick={() => setActiveTab('github')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'github'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              GitHub Accounts
+            </button>
+            <button
               onClick={() => setActiveTab('os')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'os'
@@ -313,6 +336,16 @@ export default function SettingsPage() {
               }`}
             >
               OS Settings
+            </button>
+            <button
+              onClick={() => setActiveTab('logs')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'logs'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Logs
             </button>
           </nav>
         </div>
@@ -417,6 +450,24 @@ export default function SettingsPage() {
           </div>
         )}
 
+        {/* Credentials Tab */}
+        {activeTab === 'credentials' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <AWSCredentialsManager />
+            </div>
+          </div>
+        )}
+
+        {/* GitHub Accounts Tab */}
+        {activeTab === 'github' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <GitHubAccountsManager />
+            </div>
+          </div>
+        )}
+
         {/* OS Settings Tab */}
         {activeTab === 'os' && (
           <div className="space-y-6">
@@ -428,6 +479,13 @@ export default function SettingsPage() {
               onSave={handleSave}
               saving={saving}
             />
+          </div>
+        )}
+
+        {/* Logs Tab */}
+        {activeTab === 'logs' && (
+          <div className="space-y-6">
+            <LogsViewer />
           </div>
         )}
       </div>

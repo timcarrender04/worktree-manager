@@ -22,26 +22,30 @@ export default function SignupPage() {
       return
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters')
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters')
       return
     }
 
     setLoading(true)
 
     try {
-      // Supabase disabled
-      // const { error } = await supabase.auth.signUp({
-      //   email,
-      //   password,
-      // })
+      const response = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password, name: email.split('@')[0] }),
+      })
 
-      // if (error) throw error
+      const data = await response.json()
 
-      // Redirect to login or projects page
-      // router.push('/projects')
-      // router.refresh()
-      setError('Authentication is disabled. Supabase is not configured.')
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create account')
+      }
+
+      // Success - redirect to login
+      router.push('/auth/login?signup=success')
     } catch (error: any) {
       setError(error.message || 'Failed to create account')
     } finally {

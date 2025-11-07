@@ -339,8 +339,8 @@ CREATE TRIGGER create_kanban_board_on_project_insert
 CREATE OR REPLACE FUNCTION add_owner_as_project_member()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO project_members (project_id, user_id, role)
-  VALUES (NEW.id, NEW.owner_id, 'owner')
+  INSERT INTO project_members (id, project_id, user_id, role)
+  VALUES (gen_random_uuid(), NEW.id, NEW.owner_id, 'owner')
   ON CONFLICT (project_id, user_id) DO NOTHING;
   RETURN NEW;
 END;
