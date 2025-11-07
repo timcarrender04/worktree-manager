@@ -153,19 +153,77 @@ export default function Home() {
   const loadData = async () => {
     try {
       setLoading(true);
+      setMessage(null); // Clear any previous messages
+      
       const [reposRes, worktreesRes] = await Promise.all([
         fetch('/api/repos'),
         fetch('/api/worktrees')
       ]);
       
-      const reposData = await reposRes.json();
-      const worktreesData = await worktreesRes.json();
+      let errorMessage: string | null = null;
       
-      setRepos(reposData.repos || []);
-      setWorktrees(worktreesData.worktrees || []);
+      // Check if repos response is OK
+      if (!reposRes.ok) {
+        try {
+          const errorData = await reposRes.json();
+          errorMessage = errorData.error || 'Failed to load repositories';
+        } catch {
+          errorMessage = `Failed to load repositories (${reposRes.status})`;
+        }
+        setRepos([]);
+      } else {
+        try {
+          const reposData = await reposRes.json();
+          setRepos(reposData.repos || []);
+        } catch (error) {
+          console.error('Failed to parse repos data:', error);
+          setRepos([]);
+          errorMessage = errorMessage || 'Failed to parse repositories data';
+        }
+      }
+      
+      // Check if worktrees response is OK
+      if (!worktreesRes.ok) {
+        try {
+          const errorData = await worktreesRes.json();
+          const worktreesError = errorData.error || 'Failed to load worktrees';
+          // Combine errors if both failed, otherwise set the worktrees error
+          if (errorMessage) {
+            errorMessage = `${errorMessage}. Also: ${worktreesError}`;
+          } else {
+            errorMessage = worktreesError;
+          }
+        } catch {
+          const worktreesError = `Failed to load worktrees (${worktreesRes.status})`;
+          if (errorMessage) {
+            errorMessage = `${errorMessage}. Also: ${worktreesError}`;
+          } else {
+            errorMessage = worktreesError;
+          }
+        }
+        setWorktrees([]);
+      } else {
+        try {
+          const worktreesData = await worktreesRes.json();
+          setWorktrees(worktreesData.worktrees || []);
+        } catch (error) {
+          console.error('Failed to parse worktrees data:', error);
+          setWorktrees([]);
+          if (!errorMessage) {
+            errorMessage = 'Failed to parse worktrees data';
+          }
+        }
+      }
+      
+      // Set error message if any occurred
+      if (errorMessage) {
+        setMessage({ type: 'error', text: errorMessage });
+      }
     } catch (error) {
       console.error('Failed to load data:', error);
-      setMessage({ type: 'error', text: 'Failed to load data' });
+      setMessage({ type: 'error', text: 'Failed to load data. Please try refreshing the page.' });
+      setRepos([]);
+      setWorktrees([]);
     } finally {
       setLoading(false);
     }

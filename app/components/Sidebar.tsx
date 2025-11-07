@@ -3,11 +3,19 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAuth } from '@/components/auth/AuthProvider';
 
 export function Sidebar() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, signOut, loading } = useAuth();
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  // Debug: Log auth status
+  useEffect(() => {
+    console.log('Sidebar auth status:', { user: user?.email, loading });
+  }, [user, loading]);
 
   // Load saved state from localStorage
   useEffect(() => {
@@ -55,6 +63,16 @@ export function Sidebar() {
     },
   ];
 
+  // Hide sidebar when not authenticated (after loading completes)
+  // But show loading state while checking auth to prevent flash
+  if (loading) {
+    return null; // Or return a loading skeleton if desired
+  }
+  
+  if (!user) {
+    return null;
+  }
+
   return (
     <>
       <div className={`fixed inset-y-0 left-0 z-50 bg-[var(--navy-800)] text-white hidden lg:block transition-all duration-300 ${isCollapsed ? 'w-16' : 'w-64'}`}>
@@ -100,12 +118,66 @@ export function Sidebar() {
             })}
           </nav>
 
-          {/* Footer with Title */}
-          <div className="px-6 py-4 border-t border-[var(--navy-700)]">
+          {/* Footer with Title, User Info, and Logout */}
+          <div className="px-6 py-4 border-t border-[var(--navy-700)] space-y-3">
             {!isCollapsed && (
               <h1 className="text-xl font-bold text-white leading-tight" style={{ fontFamily: 'var(--font-montserrat)' }}>
                 Worktree Manager
               </h1>
+            )}
+            
+            {/* User Info */}
+            {!loading && user && !isCollapsed && (
+              <div className="px-3 py-2 bg-[var(--navy-700)]/50 rounded-lg">
+                <p className="text-xs text-white/60 mb-1">Signed in as</p>
+                <p className="text-sm text-white font-medium truncate">{user.email || 'User'}</p>
+              </div>
+            )}
+
+            {/* Logout Button - Show if user exists OR if we're not loading (to handle dev mode) */}
+            {(!loading && user) && (
+              <button
+                onClick={async () => {
+                  setIsSigningOut(true);
+                  try {
+                    await signOut();
+                  } catch (error) {
+                    console.error('Error signing out:', error);
+                  } finally {
+                    setIsSigningOut(false);
+                  }
+                }}
+                disabled={isSigningOut}
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-3'} px-4 py-3 rounded-lg transition-all duration-200 text-white/90 hover:bg-red-600/20 hover:text-white border border-red-500/30 hover:border-red-500/50 disabled:opacity-50 disabled:cursor-not-allowed`}
+                title={isCollapsed ? 'Sign Out' : undefined}
+              >
+                <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                {!isCollapsed && (
+                  <span className="font-medium" style={{ fontFamily: 'var(--font-inter)' }}>
+                    {isSigningOut ? 'Signing out...' : 'Sign Out'}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {/* Show login link if not authenticated */}
+            {!loading && !user && (
+              <Link
+                href="/auth/login"
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center px-2' : 'space-x-3'} px-4 py-3 rounded-lg transition-all duration-200 text-white/90 hover:bg-[var(--navy-700)] hover:text-white border border-white/20 hover:border-white/30`}
+                title={isCollapsed ? 'Sign In' : undefined}
+              >
+                <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                </svg>
+                {!isCollapsed && (
+                  <span className="font-medium" style={{ fontFamily: 'var(--font-inter)' }}>
+                    Sign In
+                  </span>
+                )}
+              </Link>
             )}
           </div>
         </div>
@@ -172,6 +244,61 @@ export function Sidebar() {
                   );
                 })}
               </nav>
+
+              {/* Mobile User Info and Logout */}
+              {!loading && (
+                <div className="px-4 pb-4 border-t border-[var(--navy-700)] pt-4 space-y-3">
+                  {/* User Info */}
+                  {user && (
+                    <div className="px-3 py-2 bg-[var(--navy-700)]/50 rounded-lg">
+                      <p className="text-xs text-white/60 mb-1">Signed in as</p>
+                      <p className="text-sm text-white font-medium truncate">{user.email || 'User'}</p>
+                    </div>
+                  )}
+
+                  {/* Logout Button */}
+                  {user && (
+                    <button
+                      onClick={async () => {
+                        setIsSigningOut(true);
+                        try {
+                          await signOut();
+                          setMobileMenuOpen(false);
+                        } catch (error) {
+                          console.error('Error signing out:', error);
+                        } finally {
+                          setIsSigningOut(false);
+                        }
+                      }}
+                      disabled={isSigningOut}
+                      className="w-full flex items-center space-x-3 px-4 py-3.5 rounded-lg transition-all duration-200 touch-manipulation text-white/90 hover:bg-red-600/20 active:bg-red-600/30 hover:text-white border border-red-500/30 hover:border-red-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                      <span className="font-medium" style={{ fontFamily: 'var(--font-inter)' }}>
+                        {isSigningOut ? 'Signing out...' : 'Sign Out'}
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Sign In Link */}
+                  {!user && (
+                    <Link
+                      href="/auth/login"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className="w-full flex items-center space-x-3 px-4 py-3.5 rounded-lg transition-all duration-200 touch-manipulation text-white/90 hover:bg-[var(--navy-700)] active:bg-[var(--navy-600)] hover:text-white border border-white/20 hover:border-white/30"
+                    >
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                      </svg>
+                      <span className="font-medium" style={{ fontFamily: 'var(--font-inter)' }}>
+                        Sign In
+                      </span>
+                    </Link>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </>

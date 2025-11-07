@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { KanbanBoard } from '@/components/kanban/KanbanBoard';
@@ -36,8 +37,9 @@ interface Project {
 
 type Tab = 'backlog' | 'roadmap' | 'insights' | 'team-items' | 'my-items' | 'repositories' | 'members' | 'overview';
 
-export default function ProjectDetailPage({ params }: { params: { id: string } }) {
-  return <ProjectDetailContent projectId={params.id} />;
+export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = React.use(params);
+  return <ProjectDetailContent projectId={id} />;
 }
 
 function ProjectDetailContent({ projectId }: { projectId: string }) {

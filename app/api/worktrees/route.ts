@@ -3,6 +3,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync, statSync, mkdirSync, chmodSync } from 'fs';
 import path from 'path';
+import os from 'os';
+import { getUserGitHubToken, getAuthenticatedUserId } from '@/lib/credentials/helpers';
 
 const execAsync = promisify(exec);
 
@@ -62,6 +64,10 @@ export function getGitHubToken(): string | null {
   
   if (!token) {
     // Fallback to reading from files (for backward compatibility)
+    const homeDir = os.homedir();
+    const username = process.env.USER || process.env.USERNAME || 'root';
+    const userHomeDir = path.join('/home', username);
+    
     const tokenFiles = [
       path.join(ROOT_DIR, '..', '.github-token'),
       path.join(ROOT_DIR, '..', 'token'),
@@ -69,83 +75,308 @@ export function getGitHubToken(): string | null {
       path.join(ROOT_DIR, '.github-token'),
       path.join(ROOT_DIR, 'token'),
       path.join(ROOT_DIR, 'GITHUB_TOKEN'),
+      path.join(homeDir, '.github-token'),
+      path.join(homeDir, 'token'),
+      path.join(homeDir, 'GITHUB_TOKEN'),
+      path.join(userHomeDir, '.github-token'),
+      path.join(userHomeDir, 'token'),
+      path.join(userHomeDir, 'GITHUB_TOKEN'),
+      path.join('/home', '.github-token'),
+      path.join('/home', 'token'),
+      path.join('/home', 'GITHUB_TOKEN'),
     ];
     
     for (const tokenFile of tokenFiles) {
       try {
         if (existsSync(tokenFile)) {
+          console.log(`[getGitHubToken] Found token file at: ${tokenFile}`);
           token = readFileSync(tokenFile, 'utf-8').trim();
           break;
         }
-      } catch {
+      } catch (error) {
         // Continue to next file
+        console.debug(`[getGitHubToken] Error checking ${tokenFile}:`, error);
       }
+    }
+    
+    if (!token) {
+      console.log(`[getGitHubToken] Token not found. Checked ${tokenFiles.length} locations.`);
+      console.log(`[getGitHubToken] Home dir: ${homeDir}, User: ${username}, ROOT_DIR: ${ROOT_DIR}`);
     }
   }
   
   return token || null;
 }
 
-// Helper function to create a worktree for a single repository
 // Helper function to fetch repositories dynamically from GitHub
-async function fetchRepositoriesFromGitHub(): Promise<Map<string, { name: string; full_name: string; url: string }>> {
+// If no token is provided, fetches from all GitHub accounts in the database
+async function fetchRepositoriesFromGitHub(token?: string, userId?: string): Promise<Map<string, { name: string; full_name: string; url: string }>> {
   const repoMap = new Map<string, { name: string; full_name: string; url: string }>();
   
-  const token = getGitHubToken();
-  if (!token) {
-    return repoMap;
-  }
-  
-  const headers = {
-    'Authorization': `Bearer ${token}`,
-    'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-  
-  try {
-    let page = 1;
-    let hasMore = true;
-    const perPage = 100;
+  // If a specific token is provided, use it (for backward compatibility)
+  if (token) {
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
     
-    while (hasMore) {
-      const url = `https://api.github.com/user/repos?type=all&sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
-      const response = await fetch(url, { headers });
+    try {
+      let page = 1;
+      let hasMore = true;
+      const perPage = 100;
       
-      if (!response.ok) {
-        break;
-      }
-      
-      const repos = await response.json();
-      
-      if (repos.length === 0) {
-        hasMore = false;
-      } else {
-        repos.forEach((repo: any) => {
-          const key = repo.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-          repoMap.set(key, {
-            name: repo.name,
-            full_name: repo.full_name,
-            url: repo.clone_url || repo.html_url, // Use clone_url for git operations
-          });
-        });
+      while (hasMore) {
+        const url = `https://api.github.com/user/repos?type=all&sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
+        const response = await fetch(url, { headers });
         
-        const linkHeader = response.headers.get('link');
-        if (linkHeader && linkHeader.includes('rel="next"')) {
-          page++;
+        if (!response.ok) {
+          break;
+        }
+        
+        const repos = await response.json();
+        
+        if (repos.length === 0) {
+          hasMore = false;
         } else {
+          repos.forEach((repo: any) => {
+            const key = repo.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+            // Use full_name as key to avoid duplicates, but store by name key for lookup
+            if (!repoMap.has(key)) {
+              repoMap.set(key, {
+                name: repo.name,
+                full_name: repo.full_name,
+                url: repo.clone_url || repo.html_url, // Use clone_url for git operations
+              });
+            }
+          });
+          
+          const linkHeader = response.headers.get('link');
+          if (linkHeader && linkHeader.includes('rel="next"')) {
+            page++;
+          } else {
+            hasMore = false;
+          }
+        }
+        
+        if (page > 100) {
           hasMore = false;
         }
       }
+    } catch (error) {
+      console.error('Error fetching repositories from GitHub:', error);
+    }
+  } else {
+    // No token provided - fetch from all GitHub accounts
+    try {
+      // Import the helper function from repos route (or duplicate the logic)
+      // For now, we'll use the same approach as repos route
+      const { getAuthenticatedUserId } = await import('@/lib/credentials/helpers');
+      const targetUserId = userId || await getAuthenticatedUserId();
       
-      if (page > 100) {
-        hasMore = false;
+      // Get all GitHub accounts
+      const accounts = await getAllGitHubAccountsForWorktrees(targetUserId);
+      
+      // Fetch repos from each account
+      await Promise.all(
+        accounts.map(async (account) => {
+          const headers = {
+            'Authorization': `Bearer ${account.encrypted_token}`,
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          };
+          
+          try {
+            let page = 1;
+            let hasMore = true;
+            const perPage = 100;
+            
+            while (hasMore) {
+              const url = `https://api.github.com/user/repos?type=all&sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
+              const response = await fetch(url, { headers });
+              
+              if (!response.ok) {
+                break;
+              }
+              
+              const repos = await response.json();
+              
+              if (repos.length === 0) {
+                hasMore = false;
+              } else {
+                repos.forEach((repo: any) => {
+                  const key = repo.name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+                  // Use name key for lookup, but deduplicate by full_name
+                  if (!repoMap.has(key)) {
+                    repoMap.set(key, {
+                      name: repo.name,
+                      full_name: repo.full_name,
+                      url: repo.clone_url || repo.html_url,
+                    });
+                  }
+                });
+                
+                const linkHeader = response.headers.get('link');
+                if (linkHeader && linkHeader.includes('rel="next"')) {
+                  page++;
+                } else {
+                  hasMore = false;
+                }
+              }
+              
+              if (page > 100) {
+                hasMore = false;
+              }
+            }
+          } catch (error) {
+            console.error(`Error fetching repos from account ${account.account_name}:`, error);
+          }
+        })
+      );
+    } catch (error) {
+      console.error('Error fetching repositories from all accounts:', error);
+      // Fallback to env token if available
+      const fallbackToken = getGitHubToken();
+      if (fallbackToken) {
+        return fetchRepositoriesFromGitHub(fallbackToken);
       }
     }
-  } catch (error) {
-    console.error('Error fetching repositories from GitHub:', error);
   }
   
   return repoMap;
+}
+
+// Helper function to get all GitHub accounts (similar to repos route)
+async function getAllGitHubAccountsForWorktrees(userId: string | null): Promise<Array<{ id: string; account_name: string; github_username: string; encrypted_token: string; from_env?: boolean }>> {
+  const accounts: Array<{ id: string; account_name: string; github_username: string; encrypted_token: string; from_env?: boolean }> = [];
+  
+  // Check if using Neon (direct database) or local dev
+  const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const isLocalDev = !isUsingNeon && (
+    process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('localhost') || 
+    process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('127.0.0.1')
+  );
+
+  // First, check for GITHUB_TOKEN in environment variables
+  const envToken = getGitHubToken();
+  if (envToken) {
+    try {
+      const headers = {
+        'Authorization': `Bearer ${envToken}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      };
+      const response = await fetch('https://api.github.com/user', { headers });
+      if (response.ok) {
+        const githubUser = await response.json();
+        accounts.push({
+          id: 'env-default',
+          account_name: 'Default (from .env)',
+          github_username: githubUser.login,
+          encrypted_token: envToken,
+          from_env: true,
+        });
+      }
+    } catch (error) {
+      console.warn('GITHUB_TOKEN from environment is invalid:', error);
+    }
+  }
+
+  if (isUsingNeon || (isLocalDev && process.env.NEXT_PUBLIC_SUPABASE_URL)) {
+    // Use direct database connection for Neon or local dev
+    try {
+      if (isLocalDev && !process.env.DATABASE_URL && !process.env.PGHOST) {
+        process.env.PGHOST = 'localhost';
+        process.env.PGPORT = '5433';
+        process.env.PGUSER = 'postgres';
+        process.env.PGPASSWORD = process.env.POSTGRES_PASSWORD || 'postgres';
+        process.env.PGDATABASE = 'repo_hub';
+      }
+      
+      const { query } = await import('@/lib/db/client');
+      const targetUserId = userId || 'dev';
+      const result = await query(
+        `SELECT id, account_name, github_username, encrypted_token 
+         FROM github_accounts 
+         WHERE user_id = $1 
+         ORDER BY created_at DESC`,
+        [targetUserId]
+      );
+      
+      if (result.rows.length > 0) {
+        accounts.push(...result.rows.map((row: any) => ({
+          id: row.id,
+          account_name: row.account_name,
+          github_username: row.github_username,
+          encrypted_token: row.encrypted_token,
+        })));
+      }
+    } catch (error: any) {
+      console.warn('Error fetching GitHub accounts from database:', error.message);
+    }
+  } else {
+    // Use Supabase client for remote Supabase
+    try {
+      if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        const { createClient, createServiceRoleClient } = await import('@/lib/supabase/server');
+        const supabase = await createClient();
+        
+        let targetUserId = userId;
+        if (!targetUserId) {
+          const { data: { user }, error: authError } = await supabase.auth.getUser();
+          if (!authError && user) {
+            targetUserId = user.id;
+          } else if (process.env.NODE_ENV === 'development') {
+            targetUserId = 'dev';
+          }
+        }
+        
+        if (targetUserId) {
+          const { data: dbAccounts, error: dbError } = await supabase
+            .from('github_accounts')
+            .select('id, account_name, github_username, encrypted_token')
+            .eq('user_id', targetUserId)
+            .order('created_at', { ascending: false });
+
+          if (!dbError && dbAccounts) {
+            accounts.push(...dbAccounts.map((acc: any) => ({
+              id: acc.id,
+              account_name: acc.account_name,
+              github_username: acc.github_username,
+              encrypted_token: acc.encrypted_token,
+            })));
+          }
+        } else if (process.env.NODE_ENV === 'development' && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+          // Fallback: use service role client in dev mode
+          try {
+            const serviceClient = createServiceRoleClient();
+            const { data: allAccounts } = await serviceClient
+              .from('github_accounts')
+              .select('id, account_name, github_username, encrypted_token, user_id')
+              .order('created_at', { ascending: true });
+            
+            if (allAccounts && allAccounts.length > 0) {
+              // Try 'dev' user first, then any account
+              const devAccounts = allAccounts.filter((a: any) => a.user_id === 'dev');
+              const accountsToUse = devAccounts.length > 0 ? devAccounts : allAccounts;
+              accounts.push(...accountsToUse.map((acc: any) => ({
+                id: acc.id,
+                account_name: acc.account_name,
+                github_username: acc.github_username,
+                encrypted_token: acc.encrypted_token,
+              })));
+            }
+          } catch (serviceError: any) {
+            console.warn('Error using service role client:', serviceError?.message);
+          }
+        }
+      }
+    } catch (error: any) {
+      console.warn('Error accessing Supabase for GitHub accounts:', error.message);
+    }
+  }
+
+  return accounts;
 }
 
 // Accepts either repo name (GitHub repo name) or repo key for backward compatibility
@@ -153,7 +384,9 @@ async function createWorktreeForRepo(
   repo: string,
   type: string,
   name: string,
-  baseBranch?: string
+  baseBranch?: string,
+  githubAccountId?: string,
+  userId?: string
 ): Promise<{ success: boolean; worktree?: any; error?: string }> {
   try {
     // First try to find in hardcoded REPO_MAP (for backward compatibility)
@@ -170,7 +403,14 @@ async function createWorktreeForRepo(
       config = REPO_MAP[repo];
     } else {
       // Try to fetch dynamically from GitHub
-      const dynamicRepos = await fetchRepositoriesFromGitHub();
+      // If account ID is provided, use that account's token
+      // Otherwise, fetch from all accounts
+      let token: string | null = null;
+      if (githubAccountId && userId) {
+        token = await getUserGitHubToken(userId, githubAccountId);
+      }
+      // Pass userId so it can fetch from all accounts if no token
+      const dynamicRepos = await fetchRepositoriesFromGitHub(token || undefined, userId);
       const matchedRepo = dynamicRepos.get(repo.toLowerCase());
       
       if (matchedRepo) {
@@ -180,17 +420,49 @@ async function createWorktreeForRepo(
           url: matchedRepo.url,
         };
       } else {
-        return { success: false, error: `Invalid repository: ${repo}` };
+        return { success: false, error: `Invalid repository: ${repo}. Repository not found in any GitHub account.` };
       }
     }
     
     const repoPath = path.join(ROOT_DIR, config.name);
     const branchName = `${config.name}-${type}-${name}`;
-    // Worktrees are organized in Tree/{repo}/{branchName} where branchName includes repo prefix
-    const worktreePath = path.join(WORKTREE_ROOT, config.name, branchName);
+    
+    // Determine worktree path - optionally organize by account if account ID is provided
+    let worktreePath: string;
+    let worktreeDir: string;
+    
+    if (githubAccountId && userId) {
+      // Organize by account: Tree/{account_name}/{repo}/{branchName}
+      try {
+        const { getUserGitHubAccount } = await import('@/lib/credentials/helpers');
+        const account = await getUserGitHubAccount(userId, githubAccountId);
+        if (account) {
+          // Sanitize account name for filesystem
+          const sanitizedAccountName = account.account_name
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '');
+          worktreePath = path.join(WORKTREE_ROOT, sanitizedAccountName, config.name, branchName);
+          worktreeDir = path.join(WORKTREE_ROOT, sanitizedAccountName, config.name);
+        } else {
+          // Fallback to default organization if account not found
+          worktreePath = path.join(WORKTREE_ROOT, config.name, branchName);
+          worktreeDir = path.join(WORKTREE_ROOT, config.name);
+        }
+      } catch (error) {
+        // Fallback to default organization on error
+        console.warn('Error getting account info for worktree organization:', error);
+        worktreePath = path.join(WORKTREE_ROOT, config.name, branchName);
+        worktreeDir = path.join(WORKTREE_ROOT, config.name);
+      }
+    } else {
+      // Default organization: Tree/{repo}/{branchName} where branchName includes repo prefix
+      worktreePath = path.join(WORKTREE_ROOT, config.name, branchName);
+      worktreeDir = path.join(WORKTREE_ROOT, config.name);
+    }
     
     // Ensure WORKTREE_ROOT and repository directory exist (mkdir -p style)
-    const worktreeDir = path.join(WORKTREE_ROOT, config.name);
     try {
       mkdirSync(worktreeDir, { recursive: true });
       console.log(`Ensured worktree directory exists: ${worktreeDir}`);
@@ -222,12 +494,21 @@ async function createWorktreeForRepo(
     
     // Check if repo exists, if not clone it
     if (!existsSync(repoPath) || !existsSync(path.join(repoPath, '.git'))) {
-      const token = getGitHubToken();
+      // Get token: prefer account-specific token, fallback to env token
+      let token: string | null = null;
+      
+      if (githubAccountId && userId) {
+        token = await getUserGitHubToken(userId, githubAccountId);
+      }
+      
+      if (!token) {
+        token = getGitHubToken();
+      }
       
       if (!token) {
         return { 
           success: false, 
-          error: 'GITHUB_TOKEN not found. Please set GITHUB_TOKEN environment variable or create a token file.' 
+          error: 'GITHUB_TOKEN not found. Please set GITHUB_TOKEN environment variable, add a GitHub account, or create a token file.' 
         };
       }
       
@@ -1289,7 +1570,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { repo, repos, type, name } = body;
+    const { repo, repos, type, name, github_account_id } = body;
     
     // Support both single repo (backward compatibility) and multiple repos
     const reposToProcess: string[] = repos || (repo ? [repo] : []);
@@ -1309,8 +1590,20 @@ export async function POST(request: Request) {
       );
     }
     
+    // Get authenticated user ID if using Supabase
+    let userId: string | undefined;
+    if (github_account_id) {
+      userId = await getAuthenticatedUserId() || undefined;
+    }
+    
+    // Get token for repository fetching if account ID is provided
+    let token: string | undefined;
+    if (github_account_id && userId) {
+      token = await getUserGitHubToken(userId, github_account_id) || undefined;
+    }
+    
     // Validate all repos exist (by name or key for backward compatibility, or dynamically from GitHub)
-    const dynamicRepos = await fetchRepositoriesFromGitHub();
+    const dynamicRepos = await fetchRepositoriesFromGitHub(token);
     for (const repoIdentifier of reposToProcess) {
       const inHardcoded = REPO_NAME_MAP[repoIdentifier] || REPO_MAP[repoIdentifier];
       const inDynamic = dynamicRepos.has(repoIdentifier.toLowerCase());
@@ -1332,7 +1625,14 @@ export async function POST(request: Request) {
     
     for (const repoIdentifier of reposToProcess) {
       const repoBaseBranch = baseBranches[repoIdentifier];
-      const result = await createWorktreeForRepo(repoIdentifier, type, name, repoBaseBranch);
+      const result = await createWorktreeForRepo(
+        repoIdentifier, 
+        type, 
+        name, 
+        repoBaseBranch,
+        github_account_id,
+        userId
+      );
       
       if (result.success && result.worktree) {
         results.push(result.worktree);

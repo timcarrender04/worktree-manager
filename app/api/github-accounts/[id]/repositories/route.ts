@@ -8,26 +8,80 @@ export async function GET(
 ) {
   try {
     const { id } = await params
-    const supabase = await createClient()
     
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    // Check if using Neon (direct database) or local dev
+    // Prioritize Neon if DATABASE_URL is set (even if Supabase is also configured)
+    const isUsingNeon = !!process.env.DATABASE_URL
+    const isLocalDev = !isUsingNeon && (
+      process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('localhost') || 
+      process.env.NEXT_PUBLIC_SUPABASE_URL?.includes('127.0.0.1')
+    )
+
+    let account: { id: string; encrypted_token: string } | null = null
+    let userId: string | null = null
+
+    if (isUsingNeon || (isLocalDev && process.env.NEXT_PUBLIC_SUPABASE_URL)) {
+      // Use direct database connection for Neon or local dev
+      try {
+        // For local dev, set default connection params if not set
+        if (isLocalDev && !process.env.DATABASE_URL && !process.env.PGHOST) {
+          process.env.PGHOST = 'localhost'
+          process.env.PGPORT = '5433'
+          process.env.PGUSER = 'postgres'
+          process.env.PGPASSWORD = process.env.POSTGRES_PASSWORD || 'postgres'
+          process.env.PGDATABASE = 'repo_hub'
+        }
+        
+        const { query } = await import('@/lib/db/client')
+        // Use 'dev' user_id for development mode
+        userId = 'dev'
+        
+        const result = await query(
+          `SELECT id, encrypted_token 
+           FROM github_accounts 
+           WHERE id = $1 AND user_id = $2`,
+          [id, userId]
+        )
+        
+        if (result.rows.length > 0) {
+          account = result.rows[0]
+        }
+      } catch (error: any) {
+        console.warn('Error fetching GitHub account from database:', error.message)
+      }
+    } else {
+      // Use Supabase client for remote Supabase
+      const supabase = await createClient()
+      
+      // Get authenticated user
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      
+      if (!authError && user) {
+        userId = user.id
+      } else if (process.env.NODE_ENV === 'development') {
+        // DEV: In dev mode, allow 'dev' user
+        userId = 'dev'
+      } else {
+        return NextResponse.json(
+          { error: 'Unauthorized' },
+          { status: 401 }
+        )
+      }
+
+      // Get GitHub account (RLS will ensure user can only access their own)
+      const { data: dbAccount, error: accountError } = await supabase
+        .from('github_accounts')
+        .select('id, encrypted_token')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .single()
+
+      if (!accountError && dbAccount) {
+        account = dbAccount
+      }
     }
 
-    // Get GitHub account (RLS will ensure user can only access their own)
-    const { data: account, error: accountError } = await supabase
-      .from('github_accounts')
-      .select('id, encrypted_token')
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .single()
-
-    if (accountError || !account) {
+    if (!account) {
       return NextResponse.json(
         { error: 'GitHub account not found' },
         { status: 404 }

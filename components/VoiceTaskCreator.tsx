@@ -56,7 +56,7 @@ export function VoiceTaskCreator({ projectId: initialProjectId, repositories, on
           const response = await fetch(`/api/projects?repository=${encodeURIComponent(repoFullName)}`);
           if (response.ok) {
             const data = await response.json();
-            const projectIds = new Set((data.projects || []).map((p: Project) => p.id));
+            const projectIds = new Set<string>((data.projects || []).map((p: Project) => p.id));
             projectSets.push(projectIds);
           }
         }

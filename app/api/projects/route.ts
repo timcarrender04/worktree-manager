@@ -1,6 +1,27 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { query } from '@/lib/db/client'
+import { cookies } from 'next/headers'
+
+// Helper to get authenticated user from Supabase Auth
+async function getAuthenticatedUser(): Promise<{ id: string; email: string } | null> {
+  try {
+    const supabase = await createClient()
+    const { data: { user }, error } = await supabase.auth.getUser()
+    
+    if (error || !user) {
+      return null
+    }
+
+    return {
+      id: user.id,
+      email: user.email || '',
+    }
+  } catch (error) {
+    console.error('[DEBUG] Error getting authenticated user:', error)
+    return null
+  }
+}
 
 export async function GET(request: Request) {
   try {
@@ -8,13 +29,28 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const repository = searchParams.get('repository')
     
+    // Get authenticated user
+    const authenticatedUser = await getAuthenticatedUser()
+    console.log('[DEBUG] /api/projects - authenticated user:', authenticatedUser?.email || 'none', 'ID:', authenticatedUser?.id || 'none')
+    
     // Check if Neon (DATABASE_URL) is configured
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL
+    // Prioritize Neon if DATABASE_URL is set (even if Supabase is also configured)
+    const isUsingNeon = !!process.env.DATABASE_URL
+    const isDevelopment = process.env.NODE_ENV === 'development'
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const isLocalSupabase = supabaseUrl?.includes('localhost') || supabaseUrl?.includes('127.0.0.1') || supabaseUrl?.includes(':8002')
+    
+    console.log('[DEBUG] /api/projects - isUsingNeon:', isUsingNeon)
+    console.log('[DEBUG] /api/projects - DATABASE_URL set:', !!process.env.DATABASE_URL)
+    console.log('[DEBUG] /api/projects - NEXT_PUBLIC_SUPABASE_URL set:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
+    console.log('[DEBUG] /api/projects - isDevelopment:', isDevelopment)
+    console.log('[DEBUG] /api/projects - isLocalSupabase:', isLocalSupabase)
+    console.log('[DEBUG] /api/projects - supabaseUrl:', supabaseUrl)
     
     if (isUsingNeon) {
       // For Neon, query directly using PostgreSQL
       try {
-        // Build query with optional repository filter
+        // Build query with user filter (projects user owns or is a member of)
         let querySql = `
           SELECT DISTINCT
             p.id,
@@ -50,24 +86,37 @@ export async function GET(request: Request) {
             ), '[]'::jsonb) as project_repositories
           FROM projects p
           LEFT JOIN github_accounts ga ON p.github_account_id = ga.id
+          LEFT JOIN project_members pm ON pm.project_id = p.id
         `
+        
+        const queryParams: any[] = []
+        const conditions: string[] = []
+        
+        // Filter by user if authenticated
+        if (authenticatedUser) {
+          conditions.push(`(p.owner_id = $${queryParams.length + 1} OR pm.user_id = $${queryParams.length + 1})`)
+          queryParams.push(authenticatedUser.id)
+        }
         
         // Add repository filter if provided
         if (repository) {
-          querySql += `
-            WHERE EXISTS (
-              SELECT 1 FROM project_repositories pr
-              WHERE pr.project_id = p.id
-              AND pr.repository_full_name = $1
-            )
-          `
+          conditions.push(`EXISTS (
+            SELECT 1 FROM project_repositories pr
+            WHERE pr.project_id = p.id
+            AND pr.repository_full_name = $${queryParams.length + 1}
+          )`)
+          queryParams.push(repository)
+        }
+        
+        if (conditions.length > 0) {
+          querySql += ` WHERE ${conditions.join(' AND ')}`
         }
         
         querySql += ` ORDER BY p.created_at DESC`
         
-        const projectsResult = repository 
-          ? await query(querySql, [repository])
-          : await query(querySql)
+        const projectsResult = await query(querySql, queryParams)
+
+        console.log('[DEBUG] Neon query result - rowCount:', projectsResult?.rowCount || 0)
 
         if (!projectsResult || !projectsResult.rows) {
           return NextResponse.json({ projects: [] })
@@ -106,106 +155,233 @@ export async function GET(request: Request) {
 
         return NextResponse.json({ projects: projectsWithCounts })
       } catch (error: any) {
-        console.error('Error querying Neon for projects:', error)
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        const errorCode = (error as any)?.code
+        
+        // Log detailed error information
+        console.error('Error querying Neon for projects:', {
+          message: errorMessage,
+          code: errorCode,
+          isTimeout: errorCode === 'ETIMEDOUT' || errorMessage.includes('timeout'),
+          stack: error instanceof Error ? error.stack : undefined,
+        })
+        
+        // For timeout errors, provide a helpful message
+        if (errorCode === 'ETIMEDOUT' || errorMessage.includes('timeout')) {
+          console.warn('Neon database connection timed out. This may happen if the database is paused. It will wake up on the next successful connection.')
+        }
+        
+        // Return empty array to prevent breaking the UI
         return NextResponse.json({ projects: [] })
       }
     }
 
     // Check if Supabase is configured
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      console.warn('Neither DATABASE_URL nor Supabase configured. Returning empty projects list.')
+      console.warn('[DEBUG] Neither DATABASE_URL nor Supabase configured. Returning empty projects list.')
       return NextResponse.json({ projects: [] })
     }
 
+    console.log('[DEBUG] Using Supabase path')
+    
     const supabase = await createClient()
     
-    // Get authenticated user - allow unauthenticated for development
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    // Use service role client to bypass RLS when:
+    // 1. No authenticated user (for development/testing)
+    // 2. User is a super admin (to bypass RLS and see all projects)
+    let clientToUse = supabase
+    let shouldUseServiceRole = false
     
-    // If user is not authenticated, return empty projects array (not 401)
-    if (authError || !user) {
-      console.warn('User not authenticated. Returning empty projects list.')
-      return NextResponse.json({ projects: [] })
+    if (!authenticatedUser) {
+      console.log('[DEBUG] No authenticated user - attempting to use service role client to bypass RLS')
+      shouldUseServiceRole = true
+    } else {
+      // Check if user is super admin using service role client (to bypass RLS for the check)
+      try {
+        const { createServiceRoleClient } = await import('@/lib/supabase/server')
+        const serviceClient = createServiceRoleClient()
+        
+        const { data, error } = await serviceClient
+          .from('user_roles')
+          .select('is_super_admin')
+          .eq('user_id', authenticatedUser.id)
+          .maybeSingle()
+        
+        if (error) {
+          console.warn('[DEBUG] Error checking super admin status:', error?.message)
+        } else if (data?.is_super_admin === true) {
+          console.log('[DEBUG] User is super admin - using service role client to bypass RLS')
+          shouldUseServiceRole = true
+        } else {
+          console.log('[DEBUG] User is not super admin - using regular Supabase client')
+          console.log('[DEBUG] User ID:', authenticatedUser.id, 'Super admin status:', data?.is_super_admin || false)
+        }
+      } catch (error: any) {
+        console.warn('[DEBUG] Could not check super admin status:', error?.message)
+        // Continue with regular client
+      }
     }
-
-    // Get projects user has access to (owner or member)
-    // RLS policies will filter automatically
     
+    if (shouldUseServiceRole) {
+      console.log('[DEBUG] SUPABASE_SERVICE_ROLE_KEY set:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
+      console.log('[DEBUG] NEXT_PUBLIC_SUPABASE_ANON_KEY set:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+      try {
+        const { createServiceRoleClient } = await import('@/lib/supabase/server')
+        clientToUse = createServiceRoleClient()
+        console.log('[DEBUG] Service role client created successfully')
+        console.log('[DEBUG] Service role client URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
+        // Test the service role client by making a simple query
+        const { data: testData, error: testError } = await clientToUse
+          .from('projects')
+          .select('id')
+          .limit(1)
+        console.log('[DEBUG] Service role client test - can access projects:', !testError, 'error:', testError?.message || 'none')
+      } catch (error: any) {
+        console.warn('[DEBUG] Could not create service role client:', error?.message)
+        console.warn('[DEBUG] Error details:', error)
+        // Continue with regular client - will return empty due to RLS
+      }
+    }
     // If repository filter is provided, first get project IDs that contain this repository
-    let projectIds: string[] | null = null
+    let filteredProjectIds: string[] | null = null
     if (repository) {
-      const { data: projectRepos, error: repoError } = await supabase
+      const { data: projectRepos, error: repoError } = await clientToUse
         .from('project_repositories')
         .select('project_id')
         .eq('repository_full_name', repository)
       
       if (repoError) {
-        console.error('Error fetching projects by repository:', repoError)
+        console.error('[DEBUG] Error fetching projects by repository:', repoError)
         return NextResponse.json({ projects: [] })
       }
       
-      projectIds = projectRepos?.map((pr: any) => pr.project_id) || []
-      if (projectIds.length === 0) {
+      filteredProjectIds = (projectRepos?.map((pr: any) => pr.project_id) ?? []) as string[]
+      if (filteredProjectIds.length === 0) {
         return NextResponse.json({ projects: [] })
       }
     }
     
-    let projectsQuery = supabase
+    // Query projects without nested relationships first (Supabase RLS might block nested queries)
+    let projectsQuery = clientToUse
       .from('projects')
       .select(`
         id,
         name,
         description,
         github_account_id,
+        owner_id,
         created_at,
-        updated_at,
-        github_accounts (
-          account_name,
-          github_username
-        ),
-        project_members (
-          user_id,
-          role
-        ),
-        project_repositories (
-          id,
-          repository_full_name,
-          github_account_id
-        )
+        updated_at
       `)
     
+    // Filter by authenticated user (projects they own or are members of)
+    // If no authenticated user and using service role, get all projects
+    if (authenticatedUser) {
+      // Get project IDs where user is a member
+      const { data: memberProjects } = await clientToUse
+        .from('project_members')
+        .select('project_id')
+        .eq('user_id', authenticatedUser.id)
+      
+      const memberProjectIds = memberProjects?.map((mp: any) => mp.project_id) || []
+      
+      // Filter: owner_id = user.id OR project_id IN memberProjectIds
+      if (memberProjectIds.length > 0) {
+        projectsQuery = projectsQuery.or(`owner_id.eq.${authenticatedUser.id},id.in.(${memberProjectIds.join(',')})`)
+      } else {
+        projectsQuery = projectsQuery.eq('owner_id', authenticatedUser.id)
+      }
+    }
+    // If no authenticated user, service role client will return all projects (bypasses RLS)
+    
     // Filter by project IDs if repository filter was provided
-    if (projectIds && projectIds.length > 0) {
-      projectsQuery = projectsQuery.in('id', projectIds)
+    if (filteredProjectIds && filteredProjectIds.length > 0) {
+      projectsQuery = projectsQuery.in('id', filteredProjectIds)
     }
     
     const { data: projects, error } = await projectsQuery.order('created_at', { ascending: false })
 
+    console.log('[DEBUG] Projects query result - count:', projects?.length || 0, 'error:', error?.message || 'none')
     if (error) {
-      console.error('Error fetching projects:', error)
+      console.error('[DEBUG] Error fetching projects:', error)
+      console.error('[DEBUG] Error details:', JSON.stringify(error, null, 2))
       return NextResponse.json(
-        { error: 'Failed to fetch projects' },
+        { error: 'Failed to fetch projects', details: error.message },
         { status: 500 }
       )
     }
 
+    if (!projects || projects.length === 0) {
+      return NextResponse.json({ projects: [] })
+    }
+
+    // Fetch related data separately
+    const projectIds = projects.map((p: any) => p.id)
+    const githubAccountIds = projects
+      .map((p: any) => p.github_account_id)
+      .filter((id: any) => id) as string[]
+
+    // Fetch github accounts
+    let githubAccountsMap: Record<string, any> = {}
+    if (githubAccountIds.length > 0) {
+      const { data: githubAccounts } = await clientToUse
+        .from('github_accounts')
+        .select('id, account_name, github_username')
+        .in('id', githubAccountIds)
+      
+      if (githubAccounts) {
+        githubAccountsMap = githubAccounts.reduce((acc: any, account: any) => {
+          acc[account.id] = account
+          return acc
+        }, {})
+      }
+    }
+
+    // Fetch project members
+    const { data: projectMembers } = await clientToUse
+      .from('project_members')
+      .select('project_id, user_id, role')
+      .in('project_id', projectIds.length > 0 ? projectIds : [])
+    
+    const membersByProject: Record<string, any[]> = {}
+    if (projectMembers) {
+      projectMembers.forEach((member: any) => {
+        if (!membersByProject[member.project_id]) {
+          membersByProject[member.project_id] = []
+        }
+        membersByProject[member.project_id].push(member)
+      })
+    }
+
+    // Fetch project repositories
+    const { data: projectRepos } = await clientToUse
+      .from('project_repositories')
+      .select('project_id, id, repository_full_name, github_account_id')
+      .in('project_id', projectIds.length > 0 ? projectIds : [])
+    
+    const reposByProject: Record<string, any[]> = {}
+    if (projectRepos) {
+      projectRepos.forEach((repo: any) => {
+        if (!reposByProject[repo.project_id]) {
+          reposByProject[repo.project_id] = []
+        }
+        reposByProject[repo.project_id].push(repo)
+      })
+    }
+
     // Transform the data to include counts and simplify structure
-    const projectsWithCounts = (projects || []).map((project: any) => ({
+    const projectsWithCounts = projects.map((project: any) => ({
       id: project.id,
       name: project.name,
       description: project.description,
       github_account_id: project.github_account_id,
-      github_account: project.github_accounts ? {
-        account_name: project.github_accounts.account_name,
-        github_username: project.github_accounts.github_username,
+      github_account: project.github_account_id && githubAccountsMap[project.github_account_id] ? {
+        account_name: githubAccountsMap[project.github_account_id].account_name,
+        github_username: githubAccountsMap[project.github_account_id].github_username,
       } : null,
       owner_id: project.owner_id,
-      owner: project.owner ? {
-        id: project.owner.id,
-        email: project.owner.email,
-      } : null,
-      member_count: project.project_members?.length || 0,
-      repository_count: project.project_repositories?.length || 0,
+      member_count: membersByProject[project.id]?.length || 0,
+      repository_count: reposByProject[project.id]?.length || 0,
       created_at: project.created_at,
       updated_at: project.updated_at,
     }))
@@ -233,7 +409,8 @@ export async function POST(request: Request) {
     }
 
     // Check if Neon (DATABASE_URL) is configured
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL
+    // Prioritize Neon if DATABASE_URL is set (even if Supabase is also configured)
+    const isUsingNeon = !!process.env.DATABASE_URL
     
     if (isUsingNeon) {
       // For Neon, create project directly (skip auth for now)
@@ -246,9 +423,11 @@ export async function POST(request: Request) {
         // Validate GitHub account if provided (skip validation for env-default)
         let validatedAccountId: string | null = null;
         if (github_account_id && github_account_id !== 'env-default') {
+          // Use 'dev' user_id for development mode
+          const userId = 'dev'
           const accountResult = await query(`
-            SELECT id FROM github_accounts WHERE id = $1
-          `, [github_account_id]);
+            SELECT id FROM github_accounts WHERE id = $1 AND user_id = $2
+          `, [github_account_id, userId]);
           
           if (accountResult.rows.length > 0) {
             validatedAccountId = github_account_id;
@@ -319,9 +498,9 @@ export async function POST(request: Request) {
 
     const supabase = await createClient()
     
-    // Get authenticated user - allow unauthenticated for development but warn
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
+    // Get authenticated user from session cookie
+    const authenticatedUser = await getAuthenticatedUser()
+    if (!authenticatedUser) {
       console.warn('User not authenticated. Returning 401 for project creation.')
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -342,7 +521,7 @@ export async function POST(request: Request) {
           .from('github_accounts')
           .select('id')
           .eq('id', github_account_id)
-          .eq('user_id', user.id)
+          .eq('user_id', authenticatedUser.id)
           .single()
 
         if (accountError || !account) {
@@ -359,7 +538,7 @@ export async function POST(request: Request) {
     const { data: project, error: projectError } = await supabase
       .from('projects')
       .insert({
-        owner_id: user.id,
+        owner_id: authenticatedUser.id,
         name: name.trim(),
         description: description?.trim() || null,
         github_account_id: validatedAccountId,
@@ -377,29 +556,36 @@ export async function POST(request: Request) {
 
     // Add repositories if provided
     if (repositories && Array.isArray(repositories) && repositories.length > 0) {
-      // For env-default, we still need to store repositories, but without github_account_id
-      // For regular accounts, validate that github_account_id is provided
-      if (!github_account_id && github_account_id !== 'env-default') {
-        return NextResponse.json(
-          { error: 'github_account_id is required when adding repositories' },
-          { status: 400 }
-        )
-      }
+      // Use direct PostgreSQL for repository insertion to avoid Supabase foreign key issues
+      // This allows us to insert repositories with null github_account_id for env-default accounts
+      try {
+        const { Pool } = await import('pg')
+        const pool = new Pool({
+          host: 'localhost',
+          port: 5433,
+          database: 'repo_hub',
+          user: 'postgres',
+          password: 'postgres',
+        })
 
-      const repositoryInserts = repositories.map((repo: { repository_full_name: string }) => ({
-        project_id: project.id,
-        repository_full_name: repo.repository_full_name,
-        github_account_id: validatedAccountId, // null for env-default, actual ID for database accounts
-      }))
+        for (const repo of repositories) {
+          const repoName = typeof repo === 'string' ? repo : repo.repository_full_name
+          // Use NULL for github_account_id if validatedAccountId is null (env-default case)
+          const accountIdParam = validatedAccountId || null
+          await pool.query(
+            `INSERT INTO project_repositories (project_id, repository_full_name, github_account_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (project_id, repository_full_name) DO NOTHING`,
+            [project.id, repoName, accountIdParam]
+          )
+        }
 
-      const { error: reposError } = await supabase
-        .from('project_repositories')
-        .insert(repositoryInserts)
-
-      if (reposError) {
-        console.error('Error adding repositories to project:', reposError)
-        // Don't fail the entire request, just log the error
-        // The project was created successfully
+        await pool.end()
+        console.log(`Successfully added ${repositories.length} repository(ies) to project`)
+      } catch (pgError: any) {
+        console.error('Error adding repositories via direct PostgreSQL:', pgError)
+        // Don't fail the request - project was created successfully
+        // Repositories can be added later via the UI or API
       }
     }
 
@@ -475,7 +661,8 @@ export async function DELETE(request: Request) {
     }
 
     // Check if Neon (DATABASE_URL) is configured
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL
+    // Prioritize Neon if DATABASE_URL is set (even if Supabase is also configured)
+    const isUsingNeon = !!process.env.DATABASE_URL
     
     if (isUsingNeon) {
       // For Neon, delete project directly (skip auth for now)
@@ -506,9 +693,9 @@ export async function DELETE(request: Request) {
 
     const supabase = await createClient()
     
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
+    // Get authenticated user from session cookie
+    const authenticatedUser = await getAuthenticatedUser()
+    if (!authenticatedUser) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -529,7 +716,7 @@ export async function DELETE(request: Request) {
       )
     }
 
-    if (project.owner_id !== user.id) {
+    if (project.owner_id !== authenticatedUser.id) {
       return NextResponse.json(
         { error: 'Only project owners can delete projects' },
         { status: 403 }

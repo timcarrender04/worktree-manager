@@ -1,19 +1,9 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { deleteRemoteBranch, updateBranchStatus } from '@/lib/github/branch-utils';
 import { getGitHubToken } from '../../../worktrees/route';
-
-// Helper to query database (for Neon)
-async function queryDatabase(text: string, params?: unknown[]) {
-  const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
-  
-  if (isUsingNeon) {
-    const { query } = await import('@/lib/db/client');
-    return query(text, params);
-  }
-  
-  return null;
-}
+import { generateBranchNameFromTitle } from '@/lib/utils/branch-name';
+import { query } from '@/lib/db/client';
 
 export async function GET(
   request: Request,
@@ -21,53 +11,26 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-    if (isUsingNeon) {
-      // Get kanban board for project
-      const boardResult = await queryDatabase(`
-        SELECT id FROM kanban_boards WHERE project_id = $1
-      `, [id]);
-
-      if (!boardResult || boardResult.rows.length === 0) {
-        return NextResponse.json({ items: [] });
-      }
-
-      const boardId = boardResult.rows[0].id;
-
-      // Get kanban items
-      const itemsResult = await queryDatabase(`
-        SELECT * FROM kanban_items 
-        WHERE board_id = $1
-        ORDER BY created_at DESC
-      `, [boardId]);
-
-      return NextResponse.json({ items: itemsResult?.rows || [] });
-    }
     
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    
+    // Get kanban board for project
+    const { data: board } = await supabase
+      .from('kanban_boards')
+      .select('id')
+      .eq('project_id', id)
+      .maybeSingle();
+
+    if (!board) {
+      return NextResponse.json({ items: [] });
     }
 
-      // Get kanban board for project
-      const { data: board } = await supabase
-        .from('kanban_boards')
-        .select('id')
-        .eq('project_id', id)
-        .single();
-
-      if (!board) {
-        return NextResponse.json({ items: [] });
-      }
-
-      // Get kanban items
-      const { data: items } = await supabase
-        .from('kanban_items')
-        .select('*')
-        .eq('board_id', board.id)
-        .order('created_at', { ascending: false });
+    // Get kanban items
+    const { data: items } = await supabase
+      .from('kanban_items')
+      .select('*')
+      .eq('board_id', board.id)
+      .order('created_at', { ascending: false });
 
     return NextResponse.json({ items: items || [] });
   } catch (error: unknown) {
@@ -96,116 +59,271 @@ export async function POST(
       );
     }
 
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-    if (isUsingNeon) {
-      // Get or create kanban board
-      let boardResult = await queryDatabase(`
-        SELECT id FROM kanban_boards WHERE project_id = $1
-      `, [id]);
-
-      let boardId: string;
-      if (!boardResult || boardResult.rows.length === 0) {
-        // Create board
-        const createResult = await queryDatabase(`
-          INSERT INTO kanban_boards (project_id)
-          VALUES ($1)
-          RETURNING id
-        `, [id]);
-        if (!createResult || createResult.rows.length === 0) {
-          throw new Error('Failed to create kanban board');
-        }
-        boardId = createResult.rows[0].id;
-      } else {
-        boardId = boardResult.rows[0].id;
-      }
-
-      // Insert kanban item
-      const reposArray = repositories || [repository];
-      const insertResult = await queryDatabase(`
-        INSERT INTO kanban_items (
-          board_id, title, body, branch_name, repository, 
-          branch_type, repositories, column_id, status
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING *
-      `, [
-        boardId,
-        title,
-        itemBody || null,
-        branch_name || null,
-        repository,
-        branch_type || null,
-        JSON.stringify(reposArray),
-        column_id,
-        column_id
-      ]);
-
-      if (!insertResult || insertResult.rows.length === 0) {
-        throw new Error('Failed to create kanban item');
-      }
-
-      return NextResponse.json({ item: insertResult.rows[0] });
-    }
+    // Get or create kanban board - use local Supabase connection directly
+    let board: { id: string } | null = null;
     
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    try {
+      // Use local Supabase connection (bypass cached pool that might be pointing to Neon)
+      const { Pool } = await import('pg');
+      const localPool = new Pool({
+        host: 'localhost',
+        port: 5433,
+        database: 'repo_hub',
+        user: 'postgres',
+        password: 'postgres',
+        connectionTimeoutMillis: 3000,
+      });
+
+      try {
+        // Check if board exists
+        const boardResult = await localPool.query(
+          'SELECT id FROM kanban_boards WHERE project_id = $1',
+          [id]
+        );
+
+        if (boardResult.rows.length > 0) {
+          board = { id: boardResult.rows[0].id };
+        } else {
+          // Create board
+          const newBoardResult = await localPool.query(
+            'INSERT INTO kanban_boards (id, project_id) VALUES (gen_random_uuid(), $1) RETURNING id',
+            [id]
+          );
+          board = { id: newBoardResult.rows[0].id };
+        }
+      } finally {
+        await localPool.end();
+      }
+    } catch (pgError: any) {
+      console.error('Error with local database connection for kanban board:', pgError);
+      const errorMessage = pgError?.message || pgError?.toString() || 'Unknown error';
+      const errorCode = pgError?.code;
+      console.error('Error details:', { message: errorMessage, code: errorCode });
+      return NextResponse.json(
+        { error: 'Failed to get or create kanban board', details: errorMessage, code: errorCode },
+        { status: 500 }
+      );
     }
 
-      // Get or create kanban board
-      let { data: board } = await supabase
-        .from('kanban_boards')
-        .select('id')
-        .eq('project_id', id)
-        .single();
+    if (!board) {
+      console.error('Failed to get or create kanban board for project:', id);
+      return NextResponse.json(
+        { error: 'Failed to get or create kanban board', details: 'Check server logs' },
+        { status: 500 }
+      );
+    }
 
-      if (!board) {
-        const { data: newBoard, error: createError } = await supabase
-          .from('kanban_boards')
-          .insert({ project_id: id })
-          .select()
-          .single();
+    // Generate branch name if branch_type is provided but branch_name is not
+    let finalBranchName = branch_name;
+    if (branch_type && !finalBranchName) {
+      // For testing: generate branch name from title
+      // In production, this would use AI
+      finalBranchName = generateBranchNameFromTitle(title, branch_type as 'feat' | 'bugs' | 'fixes' | 'qaqc');
+    }
+
+    const reposArray = repositories || [repository];
+    
+    // Create kanban item - use local Supabase connection
+    let item: any;
+    
+    try {
+      const { Pool } = await import('pg');
+      const localPool = new Pool({
+        host: 'localhost',
+        port: 5433,
+        database: 'repo_hub',
+        user: 'postgres',
+        password: 'postgres',
+        connectionTimeoutMillis: 3000,
+      });
+
+      try {
+        const itemResult = await localPool.query(
+          `INSERT INTO kanban_items (
+            board_id, project_id, title, body, branch_name, repository,
+            branch_type, repositories, column_id, status
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING *`,
+          [
+            board.id,
+            id,
+            title,
+            itemBody || null,
+            finalBranchName || null,
+            repository,
+            branch_type || null,
+            JSON.stringify(reposArray),
+            column_id,
+            column_id,
+          ]
+        );
+
+        item = itemResult.rows[0];
         
-        if (createError || !newBoard) {
-          return NextResponse.json(
-            { error: 'Failed to create kanban board' },
-            { status: 500 }
-          );
+        // Parse JSONB fields
+        if (item.repositories && typeof item.repositories === 'string') {
+          item.repositories = JSON.parse(item.repositories);
         }
-        board = newBoard;
+      } finally {
+        await localPool.end();
       }
-
-      if (!board) {
+    } catch (pgError: any) {
+      console.error('Error with local database connection for kanban item:', pgError);
+      const errorMessage = pgError?.message || pgError?.toString() || 'Unknown error';
+      const errorCode = pgError?.code;
+      
+      // Don't fallback to Supabase if it's a timeout - return error instead
+      if (errorCode === 'ETIMEDOUT' || errorMessage.includes('timeout')) {
         return NextResponse.json(
-          { error: 'Failed to get or create kanban board' },
+          { error: 'Database connection timeout. Please check database is running.', details: errorMessage },
           { status: 500 }
         );
       }
+      
+      // For other errors, try Supabase fallback
+      try {
+        const supabase = createServiceRoleClient();
+        const { data: supabaseItem, error } = await supabase
+          .from('kanban_items')
+          .insert({
+            board_id: board.id,
+            project_id: id,
+            title,
+            body: itemBody || null,
+            branch_name: finalBranchName || null,
+            repository,
+            branch_type: branch_type || null,
+            repositories: reposArray,
+            column_id,
+            status: column_id,
+          })
+          .select()
+          .single();
 
-      const reposArray = repositories || [repository];
-      const { data: item, error } = await supabase
-        .from('kanban_items')
-        .insert({
-          board_id: board.id,
-          title,
-          body: itemBody || null,
-          branch_name: branch_name || null,
-          repository,
-          branch_type: branch_type || null,
-          repositories: reposArray,
-          column_id,
-          status: column_id,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          return NextResponse.json({ error: error.message, details: 'Supabase fallback also failed' }, { status: 500 });
+        }
+        item = supabaseItem;
+      } catch (supabaseError: any) {
+        return NextResponse.json(
+          { error: 'Failed to create kanban item', details: `Local: ${errorMessage}, Supabase: ${supabaseError.message}` },
+          { status: 500 }
+        );
       }
+    }
 
-    return NextResponse.json({ item });
+    // If branch_type and branch_name are set, automatically create worktrees
+    const worktreeResults: any[] = [];
+    const worktreeErrors: any[] = [];
+
+    if (branch_type && finalBranchName && reposArray.length > 0) {
+      try {
+        // Get project to find GitHub account - use direct PostgreSQL
+        let githubAccountId: string | undefined;
+        
+        try {
+          const { Pool } = await import('pg');
+          const localPool = new Pool({
+            host: 'localhost',
+            port: 5433,
+            database: 'repo_hub',
+            user: 'postgres',
+            password: 'postgres',
+            connectionTimeoutMillis: 3000,
+          });
+
+          try {
+            const projectResult = await localPool.query<{ github_account_id: string }>(
+              'SELECT github_account_id FROM projects WHERE id = $1',
+              [id]
+            );
+
+            if (projectResult.rows.length > 0 && projectResult.rows[0].github_account_id) {
+              githubAccountId = projectResult.rows[0].github_account_id;
+            }
+          } finally {
+            await localPool.end();
+          }
+        } catch (pgError) {
+          // Fallback to Supabase
+          const supabase = createServiceRoleClient();
+          const { data: project } = await supabase
+            .from('projects')
+            .select('github_account_id')
+            .eq('id', id)
+            .single();
+          
+          githubAccountId = project?.github_account_id || undefined;
+        }
+
+
+        // Get base URL for internal API calls
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ||
+          (request.headers.get('host') ? `http://${request.headers.get('host')}` : 'http://localhost:3333');
+
+        // Create worktrees for each repository
+        for (const repoFullName of reposArray) {
+          try {
+            // Extract repo name from full name (owner/repo)
+            const repoName = repoFullName.split('/').pop() || repoFullName;
+
+            // The worktree API expects the name without the branch_type prefix
+            const worktreeName = finalBranchName.startsWith(`${branch_type}-`)
+              ? finalBranchName.substring(`${branch_type}-`.length)
+              : finalBranchName;
+
+            const worktreeBody: any = {
+              repos: [repoName],
+              type: branch_type,
+              name: worktreeName,
+              baseBranch: 'main', // Default, could be made configurable
+            };
+
+            if (githubAccountId) {
+              worktreeBody.githubAccountId = githubAccountId;
+            }
+
+            const worktreeResponse = await fetch(`${baseUrl}/api/worktrees`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(worktreeBody),
+            });
+
+            const worktreeData = await worktreeResponse.json();
+
+            if (!worktreeResponse.ok) {
+              worktreeErrors.push({
+                repository: repoFullName,
+                error: worktreeData.error || 'Failed to create worktree',
+              });
+            } else {
+              worktreeResults.push({
+                repository: repoFullName,
+                success: true,
+                worktree: worktreeData.worktrees?.[0] || worktreeData.worktree || null,
+              });
+            }
+          } catch (error: any) {
+            console.error(`Error creating worktree for ${repoFullName}:`, error);
+            worktreeErrors.push({
+              repository: repoFullName,
+              error: error.message || 'Failed to create worktree',
+            });
+          }
+        }
+      } catch (error: any) {
+        console.error('Error in worktree creation process:', error);
+        // Don't fail the request - kanban item was created successfully
+      }
+    }
+
+    return NextResponse.json({
+      item,
+      worktrees: worktreeResults.length > 0 ? worktreeResults : undefined,
+      worktreeErrors: worktreeErrors.length > 0 ? worktreeErrors : undefined,
+    });
   } catch (error: unknown) {
     console.error('Error in POST /api/projects/[id]/kanban-items:', error);
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
@@ -232,38 +350,22 @@ export async function PATCH(
       );
     }
 
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabase = await createClient();
 
-    if (isUsingNeon) {
-      await queryDatabase(`
-        UPDATE kanban_items 
-        SET column_id = $1, status = $2, updated_at = NOW()
-        WHERE id = $3
-        AND board_id IN (SELECT id FROM kanban_boards WHERE project_id = $4)
-      `, [column_id, status || column_id, itemId, id]);
+    const { error } = await supabase
+      .from('kanban_items')
+      .update({
+        column_id,
+        status: status || column_id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', itemId);
 
-      return NextResponse.json({ success: true });
-    } else {
-      const supabase = await createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-
-      const { error } = await supabase
-        .from('kanban_items')
-        .update({
-          column_id,
-          status: status || column_id,
-        })
-        .eq('id', itemId);
-
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-
-      return NextResponse.json({ success: true });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    return NextResponse.json({ success: true });
   } catch (error: unknown) {
     console.error('Error in PATCH /api/projects/[id]/kanban-items:', error);
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
@@ -290,63 +392,20 @@ export async function DELETE(
       );
     }
 
-    // Check if Neon (DATABASE_URL) is configured
-    const isUsingNeon = !!process.env.DATABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabase = await createClient();
 
-    let item: any;
+    // Get item first to retrieve worktree info
+    const { data: item, error: itemError } = await supabase
+      .from('kanban_items')
+      .select('*, kanban_boards!inner(project_id)')
+      .eq('id', itemId)
+      .single();
 
-    if (isUsingNeon) {
-      // For Neon, get item first to retrieve worktree info
-      try {
-        const itemResult = await queryDatabase(`
-          SELECT * FROM kanban_items 
-          WHERE id = $1
-          AND board_id IN (SELECT id FROM kanban_boards WHERE project_id = $2)
-        `, [itemId, id]);
-
-        if (!itemResult || itemResult.rows.length === 0) {
-          return NextResponse.json(
-            { error: 'Kanban item not found' },
-            { status: 404 }
-          );
-        }
-
-        item = itemResult.rows[0];
-      } catch (error: unknown) {
-        console.error('Error fetching kanban item in Neon:', error);
-        return NextResponse.json(
-          { error: 'Failed to fetch kanban item' },
-          { status: 500 }
-        );
-      }
-    } else {
-      // Supabase path
-      const supabase = await createClient();
-
-      // Get authenticated user
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) {
-        return NextResponse.json(
-          { error: 'Unauthorized' },
-          { status: 401 }
-        );
-      }
-
-      // Get item first to retrieve worktree info
-      const { data: itemData, error: itemError } = await supabase
-        .from('kanban_items')
-        .select('*, kanban_boards!inner(project_id)')
-        .eq('id', itemId)
-        .single();
-
-      if (itemError || !itemData) {
-        return NextResponse.json(
-          { error: 'Kanban item not found' },
-          { status: 404 }
-        );
-      }
-
-      item = itemData;
+    if (itemError || !item) {
+      return NextResponse.json(
+        { error: 'Kanban item not found' },
+        { status: 404 }
+      );
     }
 
     // Delete associated worktrees and remote branches
@@ -496,41 +555,20 @@ export async function DELETE(
     }
 
     // Delete the kanban item
-    if (isUsingNeon) {
-      try {
-        await queryDatabase(`
-          DELETE FROM kanban_items 
-          WHERE id = $1
-          AND board_id IN (SELECT id FROM kanban_boards WHERE project_id = $2)
-        `, [itemId, id]);
+    const { error: deleteError } = await supabase
+      .from('kanban_items')
+      .delete()
+      .eq('id', itemId);
 
-        return NextResponse.json({ success: true });
-      } catch (error: unknown) {
-        console.error('Error deleting kanban item in Neon:', error);
-        return NextResponse.json(
-          { error: 'Failed to delete kanban item' },
-          { status: 500 }
-        );
-      }
-    } else {
-      // Supabase path
-      const supabase = await createClient();
-
-      const { error: deleteError } = await supabase
-        .from('kanban_items')
-        .delete()
-        .eq('id', itemId);
-
-      if (deleteError) {
-        console.error('Error deleting kanban item:', deleteError);
-        return NextResponse.json(
-          { error: 'Failed to delete kanban item' },
-          { status: 500 }
-        );
-      }
-
-      return NextResponse.json({ success: true });
+    if (deleteError) {
+      console.error('Error deleting kanban item:', deleteError);
+      return NextResponse.json(
+        { error: 'Failed to delete kanban item' },
+        { status: 500 }
+      );
     }
+
+    return NextResponse.json({ success: true });
   } catch (error: unknown) {
     console.error('Error in DELETE /api/projects/[id]/kanban-items:', error);
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
