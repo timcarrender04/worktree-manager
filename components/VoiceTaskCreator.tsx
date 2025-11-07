@@ -282,158 +282,167 @@ export function VoiceTaskCreator({ projectId: initialProjectId, repositories, on
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
-      <h2 className="text-xl font-semibold text-gray-900">Create Task with Voice</h2>
-
-      {/* Repository Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Select Repositories *
-        </label>
-        <div className="space-y-2">
-          {repositories.map((repo) => (
-            <label key={repo.id} className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                checked={selectedRepos.includes(repo.repository_full_name)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelectedRepos([...selectedRepos, repo.repository_full_name]);
-                  } else {
-                    setSelectedRepos(selectedRepos.filter(r => r !== repo.repository_full_name));
-                    setBaseBranches(prev => {
-                      const newBranches = { ...prev };
-                      delete newBranches[repo.repository_full_name];
-                      return newBranches;
-                    });
-                  }
-                }}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm text-gray-700">{repo.repository_full_name}</span>
-            </label>
-          ))}
+    <div className="relative">
+      {loading && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-white/80 backdrop-blur-sm">
+          <span className="text-5xl" role="img" aria-label="Robot">🤖</span>
+          <div className="h-10 w-10 rounded-full border-4 border-blue-400 border-t-transparent animate-spin" />
+          <p className="text-sm font-medium text-gray-700">AI is thinking...</p>
         </div>
-      </div>
+      )}
+      <div className={`bg-white rounded-lg shadow-md p-6 space-y-4 transition ${loading ? 'blur-sm pointer-events-none select-none' : ''}`}>
+        <h2 className="text-xl font-semibold text-gray-900">Create Task with Voice</h2>
 
-      {/* Project Selection - only show if projectId wasn't provided initially */}
-      {!initialProjectId && selectedRepos.length > 0 && (
+        {/* Repository Selection */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Select Project *
+            Select Repositories *
           </label>
-          {loadingProjects ? (
-            <div className="text-sm text-gray-500">Loading projects...</div>
-          ) : availableProjects.length === 0 ? (
-            <div className="text-sm text-amber-600 bg-amber-50 p-2 rounded">
-              No projects found containing the selected repositories. Please add the repositories to a project first.
-            </div>
-          ) : (
+          <div className="space-y-2">
+            {repositories.map((repo) => (
+              <label key={repo.id} className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={selectedRepos.includes(repo.repository_full_name)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedRepos([...selectedRepos, repo.repository_full_name]);
+                    } else {
+                      setSelectedRepos(selectedRepos.filter(r => r !== repo.repository_full_name));
+                      setBaseBranches(prev => {
+                        const newBranches = { ...prev };
+                        delete newBranches[repo.repository_full_name];
+                        return newBranches;
+                      });
+                    }
+                  }}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">{repo.repository_full_name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Project Selection - only show if projectId wasn't provided initially */}
+        {!initialProjectId && selectedRepos.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select Project *
+            </label>
+            {loadingProjects ? (
+              <div className="text-sm text-gray-500">Loading projects...</div>
+            ) : availableProjects.length === 0 ? (
+              <div className="text-sm text-amber-600 bg-amber-50 p-2 rounded">
+                No projects found containing the selected repositories. Please add the repositories to a project first.
+              </div>
+            ) : (
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select a project...</option>
+                {availableProjects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name} {project.description ? `- ${project.description}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
+        {/* Base Branch Selection per Repo */}
+        {selectedRepos.map((repo) => (
+          <div key={repo}>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Base Branch for {repo}
+            </label>
             <select
-              value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
+              value={baseBranches[repo] || ''}
+              onChange={(e) => setBaseBranches(prev => ({ ...prev, [repo]: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="">Select a project...</option>
-              {availableProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name} {project.description ? `- ${project.description}` : ''}
+              <option value="">Select branch...</option>
+              {(branches[repo] || []).map((branch) => (
+                <option key={branch} value={branch}>
+                  {branch}
                 </option>
               ))}
             </select>
-          )}
-        </div>
-      )}
+          </div>
+        ))}
 
-      {/* Base Branch Selection per Repo */}
-      {selectedRepos.map((repo) => (
-        <div key={repo}>
+        {/* Branch Type */}
+        <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Base Branch for {repo}
+            Branch Type *
           </label>
           <select
-            value={baseBranches[repo] || ''}
-            onChange={(e) => setBaseBranches(prev => ({ ...prev, [repo]: e.target.value }))}
+            value={selectedType}
+            onChange={(e) => setSelectedType(e.target.value as any)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">Select branch...</option>
-            {(branches[repo] || []).map((branch) => (
-              <option key={branch} value={branch}>
-                {branch}
-              </option>
-            ))}
+            <option value="">Select type...</option>
+            <option value="feat">Feature</option>
+            <option value="bugs">Bug Fix</option>
+            <option value="fixes">Fixes</option>
+            <option value="qaqc">QA/QC</option>
           </select>
         </div>
-      ))}
 
-      {/* Branch Type */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Branch Type *
-        </label>
-        <select
-          value={selectedType}
-          onChange={(e) => setSelectedType(e.target.value as any)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">Select type...</option>
-          <option value="feat">Feature</option>
-          <option value="bugs">Bug Fix</option>
-          <option value="fixes">Fixes</option>
-          <option value="qaqc">QA/QC</option>
-        </select>
-      </div>
+        {/* Voice Input */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Voice Input *
+          </label>
+          <VoiceInput onTranscript={handleTranscript} disabled={loading} />
+        </div>
 
-      {/* Voice Input */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Voice Input *
-        </label>
-        <VoiceInput onTranscript={handleTranscript} disabled={loading} />
-      </div>
-
-      {/* Generate Task Button */}
-      {voiceTranscript && selectedType && (
-        <button
-          onClick={generateTask}
-          disabled={loading}
-          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-        >
-          {loading ? 'Generating...' : 'Generate Task'}
-        </button>
-      )}
-
-      {/* AI Generated Preview */}
-      {aiGenerated && (
-        <div className="border border-gray-200 rounded-md p-4 space-y-3">
-          <h3 className="font-medium text-gray-900">Generated Task Preview</h3>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Title</label>
-            <p className="mt-1 text-sm text-gray-900">{aiGenerated.title}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Branch Name</label>
-            <p className="mt-1 text-sm text-gray-900 font-mono">{aiGenerated.branchName}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Description</label>
-            <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{aiGenerated.description}</p>
-          </div>
+        {/* Generate Task Button */}
+        {voiceTranscript && selectedType && (
           <button
-            onClick={createTask}
+            onClick={generateTask}
             disabled={loading}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            {loading ? 'Creating...' : 'Create Task & Worktrees'}
+            {loading ? 'Generating...' : 'Generate Task'}
           </button>
-        </div>
-      )}
+        )}
 
-      {error && (
-        <div className="text-sm text-red-600 bg-red-50 p-3 rounded">
-          {error}
-        </div>
-      )}
+        {/* AI Generated Preview */}
+        {aiGenerated && (
+          <div className="border border-gray-200 rounded-md p-4 space-y-3">
+            <h3 className="font-medium text-gray-900">Generated Task Preview</h3>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Title</label>
+              <p className="mt-1 text-sm text-gray-900">{aiGenerated.title}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Branch Name</label>
+              <p className="mt-1 text-sm text-gray-900 font-mono">{aiGenerated.branchName}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Description</label>
+              <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{aiGenerated.description}</p>
+            </div>
+            <button
+              onClick={createTask}
+              disabled={loading}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Creating...' : 'Create Task & Worktrees'}
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="text-sm text-red-600 bg-red-50 p-3 rounded">
+            {error}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

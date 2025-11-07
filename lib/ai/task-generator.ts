@@ -97,9 +97,9 @@ Return ONLY valid JSON (no markdown, no extra text):
     console.log(`[AI] Starting task generation with model: ${ollamaModel} at ${ollamaBaseUrl}`);
     const startTime = Date.now();
     
-    // Add timeout wrapper (60 seconds for 7B model - should be enough even on CPU)
+    // Add timeout wrapper (120 seconds for 7B model - allows slower CPU generations)
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('AI generation timeout after 60 seconds')), 60000);
+      setTimeout(() => reject(new Error('AI generation timeout after 120 seconds')), 120000);
     });
     
     const result = await Promise.race([

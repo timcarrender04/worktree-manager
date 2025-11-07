@@ -1,5 +1,5 @@
 services:
-  worktree-manager-tim-175:
+  worktree-manager-hds-175:
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,14 +10,15 @@ services:
         # Note: Set CACHE_BUST environment variable before running docker-compose
         # e.g., CACHE_BUST=$(date +%s) docker-compose build
         - CACHE_BUST=${CACHE_BUST:-}
-    container_name: worktree-manager-tim-175  
+    container_name: worktree-manager-hds-175
     env_file:
       - .env
     ports:
       - "3021:3000"
     environment:
       - REPO_ROOT=/repos
-      - HOST_REPO_ROOT=${HOST_REPO_ROOT:-/home/tim-175/repos}
+      - HOST_REPO_ROOT=${HOST_REPO_ROOT:-/home/ert/projects/backend/repo-hub/repos}
+      - WORKTREE_ROOT=${WORKTREE_ROOT:-/repos/hds-175/Tree}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GITHUB_ORG=${GITHUB_ORG:-timcarrender04}
       - FRONTEND_REPO=${FRONTEND_REPO:-sideline-frontend}
@@ -27,21 +28,11 @@ services:
       - BACKEND_KEY=${BACKEND_KEY:-backend}
       - VIEWER_KEY=${VIEWER_KEY:-viewer}
       - NODE_ENV=development
-      # Neon PostgreSQL Database
-      - DATABASE_URL=${DATABASE_URL:-}
-      # Ollama AI Server Configuration
-      - OLLAMA_SERVER=${OLLAMA_SERVER:-192.168.1.223:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
-      # Supabase (via root docker-compose stack)
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-http://host.docker.internal:8002}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}
-      - NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL:-http://localhost:3021}
     volumes:
       # Mount the directory containing your repositories
       # Adjust this path to match where your repositories are located on the host
       # Directory names should match repository names configured in FRONTEND_REPO, BACKEND_REPO, etc.
-      - /home/tim-175/repos:/repos:rw
+      - ${HOST_REPO_ROOT:-/home/ert/projects/backend/repo-hub/repos}:/repos:rw
       # Alternative: mount specific repository directories (uncomment and adjust paths):
       # - /path/to/your-frontend-repo:/repos/your-frontend-repo:rw
       # - /path/to/your-backend-repo:/repos/your-backend-repo:rw

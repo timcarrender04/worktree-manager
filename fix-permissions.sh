@@ -2,12 +2,18 @@
 # Script to fix permissions on repos directory
 # Run this after creating worktrees if you encounter permission issues
 
-REPOS_DIR="/home/tim-175/repos"
-USER_ID=1020
-GROUP_ID=1020
+REPOS_DIR="${REPO_ROOT:-${HOST_REPO_ROOT:-/home/ert/projects/backend/repo-hub/repos}}"
+USER_ID="${USER_ID:-$(id -u)}"
+GROUP_ID="${GROUP_ID:-$(id -g)}"
+
+if [ ! -d "$REPOS_DIR" ]; then
+  echo "❌ Repository directory '$REPOS_DIR' does not exist."
+  echo "    Set REPO_ROOT or HOST_REPO_ROOT to the correct path and re-run this script."
+  exit 1
+fi
 
 echo "Fixing permissions on $REPOS_DIR..."
-sudo chown -R $USER_ID:$GROUP_ID "$REPOS_DIR"
+sudo chown -R "$USER_ID":"$GROUP_ID" "$REPOS_DIR"
 sudo chmod -R u+rwX,g+rwX,o+rX "$REPOS_DIR"
 
 # Make .git directories writable (needed for worktree operations)

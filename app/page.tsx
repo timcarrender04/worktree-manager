@@ -1714,151 +1714,160 @@ export default function Home() {
       }} className="relative z-50">
         <div className="fixed inset-0 bg-black/30" aria-hidden="true" />
         <div className="fixed inset-0 flex items-center justify-center p-4">
-          <Dialog.Panel className="mx-auto max-w-2xl w-full rounded-lg bg-[var(--white)] p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-        <Dialog.Title className="text-xl font-semibold text-[var(--foreground)] mb-4">
-          Create {activeTypeLabel} with AI
-        </Dialog.Title>
-            <Dialog.Description className="text-sm text-[var(--foreground-muted)] mb-6">
-          Use your microphone to describe the {activeTypeLabelLower} you want to create. Our AI will generate the task title, branch name, and description.
-            </Dialog.Description>
-
-            {selectedRepos.length === 0 && (
-              <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-sm text-yellow-800">
-              Please select at least one repository before creating a {activeTypeLabelLower}.
-                </p>
+          <Dialog.Panel className="relative mx-auto max-w-2xl w-full rounded-lg bg-[var(--white)] p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            {generatingTask && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-[var(--white)]/85 backdrop-blur-sm">
+                <span className="text-5xl" role="img" aria-label="Robot">🤖</span>
+                <div className="h-10 w-10 rounded-full border-4 border-[var(--accent)] border-t-transparent animate-spin" />
+                <p className="text-sm font-medium text-[var(--foreground-muted)]">AI is thinking...</p>
               </div>
             )}
+            <div className={generatingTask ? 'blur-sm pointer-events-none select-none' : ''}>
+              <Dialog.Title className="text-xl font-semibold text-[var(--foreground)] mb-4">
+                Create {activeTypeLabel} with AI
+              </Dialog.Title>
+              <Dialog.Description className="text-sm text-[var(--foreground-muted)] mb-6">
+                Use your microphone to describe the {activeTypeLabelLower} you want to create. Our AI will generate the task title, branch name, and description.
+              </Dialog.Description>
 
-            {selectedRepos.length > 0 && (
-              <>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
-                    Selected Repositories
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedRepos.map((repoKey) => {
-                      const repo = repos.find(r => r.key === repoKey);
-                      return (
-                        <span
-                          key={repoKey}
-                          className="px-3 py-1 bg-[var(--accent-light)]/20 text-[var(--foreground)] rounded-lg text-sm"
-                        >
-                          {REPO_DISPLAY_NAMES[repoKey] || repo?.name || repoKey}
-                        </span>
-                      );
-                    })}
-                  </div>
+              {selectedRepos.length === 0 && (
+                <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-sm text-yellow-800">
+                    Please select at least one repository before creating a {activeTypeLabelLower}.
+                  </p>
                 </div>
+              )}
 
-                {selectedRepos.length > 0 && (
+              {selectedRepos.length > 0 && (
+                <>
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
-                      Base Branch (for each repository)
+                      Selected Repositories
                     </label>
-                    <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
                       {selectedRepos.map((repoKey) => {
                         const repo = repos.find(r => r.key === repoKey);
-                        const branches = repoBranches[repoKey] || [];
-                        const isLoading = loadingBranches[repoKey];
-                        
                         return (
-                          <div key={repoKey} className="flex items-center gap-3">
-                            <label className="text-sm text-[var(--foreground-muted)] w-32 flex-shrink-0">
-                              {REPO_DISPLAY_NAMES[repoKey] || repo?.name || repoKey}:
-                            </label>
-                            <select
-                              value={baseBranches[repoKey] || ''}
-                              onChange={(e) => setBaseBranches(prev => ({ ...prev, [repoKey]: e.target.value }))}
-                              className="flex-1 px-4 py-2 border border-[var(--white-100)] rounded-lg bg-[var(--white)] text-[var(--foreground)] focus:ring-2 focus:ring-[var(--accent)] focus:border-[var(--accent)] transition-colors"
-                              disabled={creating || isLoading}
-                            >
-                              {isLoading ? (
-                                <option>Loading branches...</option>
-                              ) : branches.length === 0 ? (
-                                <option>No branches available</option>
-                              ) : (
-                                <>
-                                  <option value="">Select base branch...</option>
-                                  {branches.map((branch) => (
-                                    <option key={branch} value={branch}>
-                                      {branch}
-                                    </option>
-                                  ))}
-                                </>
-                              )}
-                            </select>
-                          </div>
+                          <span
+                            key={repoKey}
+                            className="px-3 py-1 bg-[var(--accent-light)]/20 text-[var(--foreground)] rounded-lg text-sm"
+                          >
+                            {REPO_DISPLAY_NAMES[repoKey] || repo?.name || repoKey}
+                          </span>
                         );
                       })}
                     </div>
                   </div>
-                )}
-              </>
-            )}
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
-              Task Description
-              </label>
-              <p className="text-xs text-[var(--foreground-muted)] mb-2">
-                Type your description or use voice input below
-              </p>
-              <VoiceInput onTranscript={handleVoiceTranscript} disabled={generatingTask || creating} />
-            </div>
+                  {selectedRepos.length > 0 && (
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                        Base Branch (for each repository)
+                      </label>
+                      <div className="space-y-2">
+                        {selectedRepos.map((repoKey) => {
+                          const repo = repos.find(r => r.key === repoKey);
+                          const branches = repoBranches[repoKey] || [];
+                          const isLoading = loadingBranches[repoKey];
+                          
+                          return (
+                            <div key={repoKey} className="flex items-center gap-3">
+                              <label className="text-sm text-[var(--foreground-muted)] w-32 flex-shrink-0">
+                                {REPO_DISPLAY_NAMES[repoKey] || repo?.name || repoKey}:
+                              </label>
+                              <select
+                                value={baseBranches[repoKey] || ''}
+                                onChange={(e) => setBaseBranches(prev => ({ ...prev, [repoKey]: e.target.value }))}
+                                className="flex-1 px-4 py-2 border border-[var(--white-100)] rounded-lg bg-[var(--white)] text-[var(--foreground)] focus:ring-2 focus:ring-[var(--accent)] focus:border-[var(--accent)] transition-colors"
+                                disabled={creating || isLoading}
+                              >
+                                {isLoading ? (
+                                  <option>Loading branches...</option>
+                                ) : branches.length === 0 ? (
+                                  <option>No branches available</option>
+                                ) : (
+                                  <>
+                                    <option value="">Select base branch...</option>
+                                    {branches.map((branch) => (
+                                      <option key={branch} value={branch}>
+                                        {branch}
+                                      </option>
+                                    ))}
+                                  </>
+                                )}
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
 
-            {voiceTranscript && !aiGeneratedTask && (
               <div className="mb-4">
-                <button
-                  onClick={generateTaskWithAI}
-                  disabled={generatingTask || selectedRepos.length === 0}
-                  className="w-full px-4 py-2 bg-[var(--accent)] text-[var(--navy-900)] font-semibold rounded-lg hover:bg-[var(--accent-hover)] disabled:bg-[var(--white-100)] disabled:text-[var(--foreground-muted)] disabled:cursor-not-allowed transition-colors"
-                >
-                  {generatingTask ? 'Generating with AI...' : 'Generate Task with AI'}
-                </button>
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                  Task Description
+                </label>
+                <p className="text-xs text-[var(--foreground-muted)] mb-2">
+                  Type your description or use voice input below
+                </p>
+                <VoiceInput onTranscript={handleVoiceTranscript} disabled={generatingTask || creating} />
               </div>
-            )}
 
-            {aiGeneratedTask && (
-              <div className="mb-4 p-4 bg-[var(--white-50)] border border-[var(--white-100)] rounded-lg">
-                <h3 className="font-medium text-[var(--foreground)] mb-3">AI Generated Task</h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-medium text-[var(--foreground-muted)] mb-1">Title</label>
-                    <p className="text-sm text-[var(--foreground)]">{aiGeneratedTask.title}</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-[var(--foreground-muted)] mb-1">Branch Name</label>
-                    <p className="text-sm text-[var(--foreground)] font-mono">{aiGeneratedTask.branchName}</p>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-[var(--foreground-muted)] mb-1">Description</label>
-                    <p className="text-sm text-[var(--foreground-muted)] whitespace-pre-wrap">{aiGeneratedTask.description}</p>
+              {voiceTranscript && !aiGeneratedTask && (
+                <div className="mb-4">
+                  <button
+                    onClick={generateTaskWithAI}
+                    disabled={generatingTask || selectedRepos.length === 0}
+                    className="w-full px-4 py-2 bg-[var(--accent)] text-[var(--navy-900)] font-semibold rounded-lg hover:bg-[var(--accent-hover)] disabled:bg-[var(--white-100)] disabled:text-[var(--foreground-muted)] disabled:cursor-not-allowed transition-colors"
+                  >
+                    {generatingTask ? 'Generating with AI...' : 'Generate Task with AI'}
+                  </button>
+                </div>
+              )}
+
+              {aiGeneratedTask && (
+                <div className="mb-4 p-4 bg-[var(--white-50)] border border-[var(--white-100)] rounded-lg">
+                  <h3 className="font-medium text-[var(--foreground)] mb-3">AI Generated Task</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--foreground-muted)] mb-1">Title</label>
+                      <p className="text-sm text-[var(--foreground)]">{aiGeneratedTask.title}</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--foreground-muted)] mb-1">Branch Name</label>
+                      <p className="text-sm text-[var(--foreground)] font-mono">{aiGeneratedTask.branchName}</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--foreground-muted)] mb-1">Description</label>
+                      <p className="text-sm text-[var(--foreground-muted)] whitespace-pre-wrap">{aiGeneratedTask.description}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-
-            <div className="flex gap-3 justify-end mt-6">
-              <button
-                onClick={() => {
-                  setAiDialogOpen(false);
-                  setVoiceTranscript('');
-                  setAiGeneratedTask(null);
-                }}
-                className="px-4 py-2 text-sm font-medium text-[var(--foreground-muted)] bg-[var(--white-100)] rounded-lg hover:bg-[var(--white-100)]/80 transition-colors"
-              >
-                Cancel
-              </button>
-              {aiGeneratedTask && (
-                <button
-                  onClick={createTaskFromAI}
-                  disabled={creating || selectedRepos.length === 0}
-                  className="px-4 py-2 text-sm font-medium text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] disabled:bg-[var(--white-100)] disabled:text-[var(--foreground-muted)] disabled:cursor-not-allowed transition-colors"
-                >
-                  {creating ? 'Creating...' : 'Create Worktrees'}
-                </button>
               )}
+
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => {
+                    setAiDialogOpen(false);
+                    setVoiceTranscript('');
+                    setAiGeneratedTask(null);
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-[var(--foreground-muted)] bg-[var(--white-100)] rounded-lg hover:bg-[var(--white-100)]/80 transition-colors"
+                >
+                  Cancel
+                </button>
+                {aiGeneratedTask && (
+                  <button
+                    onClick={createTaskFromAI}
+                    disabled={creating || selectedRepos.length === 0}
+                    className="px-4 py-2 text-sm font-medium text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] disabled:bg-[var(--white-100)] disabled:text-[var(--foreground-muted)] disabled:cursor-not-allowed transition-colors"
+                  >
+                    {creating ? 'Creating...' : 'Create Worktrees'}
+                  </button>
+                )}
+              </div>
             </div>
           </Dialog.Panel>
         </div>

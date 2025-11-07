@@ -72,9 +72,21 @@ All environment-specific configuration is managed through a `.env` file. A templ
 - `GITHUB_ORG`: GitHub organization or username (default: `timcarrender04`)
 
 **Repository Paths:**
+- `REPO_HUB_ROOT`: Base directory that contains all repositories (default: `../repos`)
 - `REPO_ROOT`: Root directory where repositories are located (default: `/repos`)
 - `HOST_REPO_ROOT`: Host path for repositories, used for path translation (default: same as `REPO_ROOT`)
 - `WORKTREE_ROOT`: Root directory for worktrees (default: `{REPO_ROOT}/Tree`)
+
+When using the shared repo-hub deployment located at `/home/ert/projects/backend/repo-hub`, point these variables to the shared storage and include a user-specific segment so each Worktree Manager operates in its own sandbox:
+
+```env
+REPO_HUB_ROOT=/home/ert/projects/backend/repo-hub/repos
+REPO_ROOT=/home/ert/projects/backend/repo-hub/repos
+HOST_REPO_ROOT=/home/ert/projects/backend/repo-hub/repos
+WORKTREE_ROOT=/home/ert/projects/backend/repo-hub/repos/hds-175/Tree
+```
+
+Create the per-user directory ahead of time (for example `mkdir -p /home/ert/projects/backend/repo-hub/repos/hds-175/Tree`) so worktrees do not overlap across accounts. Replace `hds-175` with each user's identifier if you are onboarding multiple accounts.
 
 **Repository Names** (only override if using different repo names):
 - `FRONTEND_REPO`: Frontend repository name (default: `sideline-frontend`)
@@ -161,9 +173,16 @@ The docker-compose.yml mounts the parent directory (`../`) to `/repos` so the co
 
 2. Or mounting from a different location:
    ```yaml
-   volumes:
-     - /path/to/repos:/repos:rw
+   services:
+     worktree-manager:
+       environment:
+         - HOST_REPO_ROOT=/home/ert/projects/backend/repo-hub/repos
+          - WORKTREE_ROOT=/repos/hds-175/Tree
+       volumes:
+         - ${HOST_REPO_ROOT}:/repos:rw
    ```
+
+  For per-user isolation, create a subdirectory under the shared repo-hub storage (for example `repos/hds-175`) and point `WORKTREE_ROOT` at that directory. When running inside Docker, set `WORKTREE_ROOT=/repos/hds-175/Tree`; when running directly on the host, use `WORKTREE_ROOT=${HOST_REPO_ROOT}/hds-175/Tree`.
 
 ## Usage
 

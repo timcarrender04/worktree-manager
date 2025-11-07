@@ -150,7 +150,7 @@ if [ -n "$BRANCH_NAME" ]; then
       fi
     else
       # Try to construct expected path
-      REPO_ROOT="${REPO_ROOT:-/home/tim-175/repos}"
+      REPO_ROOT="${REPO_ROOT:-/home/ert/projects/backend/repo-hub/repos}"
       TREE_ROOT="${WORKTREE_ROOT:-$REPO_ROOT/Tree}"
       EXPECTED_PATH="$TREE_ROOT/$REPO_NAME/$BRANCH_NAME"
       

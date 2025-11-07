@@ -107,6 +107,8 @@ const TYPE_LABELS: Record<string, string> = {
 const REPO_HUB_ROOT = process.env.REPO_HUB_ROOT || path.resolve(process.cwd(), '..', 'repos');
 const ROOT_DIR = process.env.REPO_ROOT || REPO_HUB_ROOT;
 const HOST_ROOT_DIR = process.env.HOST_REPO_ROOT || ROOT_DIR;
+const WORKTREE_MANAGER_ROOT = process.env.WORKTREE_MANAGER_ROOT || process.cwd();
+const FIX_PERMISSIONS_COMMAND = `cd ${WORKTREE_MANAGER_ROOT} && ./fix-permissions.sh`;
     // Worktrees are organized in Tree/{repo}/{branchName} at the root level
     // Use ROOT_DIR (container path) for actual file operations, HOST_ROOT_DIR is only for path translation
     const WORKTREE_ROOT = process.env.WORKTREE_ROOT || path.join(ROOT_DIR, 'Tree');
@@ -620,7 +622,7 @@ async function createWorktreeForRepo(
         } catch (mkdirError: any) {
           return { 
             success: false, 
-            error: `Failed to create parent directory ${parentOfTreeRoot}: ${mkdirError.message}. Please ensure the directory exists or run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh` 
+            error: `Failed to create parent directory ${parentOfTreeRoot}: ${mkdirError.message}. Please ensure the directory exists or run: ${FIX_PERMISSIONS_COMMAND}` 
           };
         }
       }
@@ -640,13 +642,13 @@ async function createWorktreeForRepo(
         } catch (readError: any) {
           return { 
             success: false, 
-            error: `Cannot read parent directory ${parentOfTreeRoot}: ${readError.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh` 
+            error: `Cannot read parent directory ${parentOfTreeRoot}: ${readError.message}. Please run: ${FIX_PERMISSIONS_COMMAND}` 
           };
         }
       } catch (parentStatError: any) {
         return { 
           success: false, 
-          error: `Cannot access parent directory ${parentOfTreeRoot}: ${parentStatError.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh` 
+          error: `Cannot access parent directory ${parentOfTreeRoot}: ${parentStatError.message}. Please run: ${FIX_PERMISSIONS_COMMAND}` 
         };
       }
       
@@ -658,8 +660,8 @@ async function createWorktreeForRepo(
         } catch (mkdirError: any) {
           // Provide helpful error message with fix instructions
           const errorMsg = mkdirError.code === 'EACCES' 
-            ? `Permission denied creating ${WORKTREE_ROOT}. The process does not have write permission to ${parentOfTreeRoot}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`
-            : `Failed to create ${WORKTREE_ROOT}: ${mkdirError.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`;
+            ? `Permission denied creating ${WORKTREE_ROOT}. The process does not have write permission to ${parentOfTreeRoot}. Please run: ${FIX_PERMISSIONS_COMMAND}`
+            : `Failed to create ${WORKTREE_ROOT}: ${mkdirError.message}. Please run: ${FIX_PERMISSIONS_COMMAND}`;
           return { 
             success: false, 
             error: errorMsg
@@ -682,13 +684,13 @@ async function createWorktreeForRepo(
         } catch (readError: any) {
           return { 
             success: false, 
-            error: `Cannot access WORKTREE_ROOT ${WORKTREE_ROOT}: ${readError.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh` 
+            error: `Cannot access WORKTREE_ROOT ${WORKTREE_ROOT}: ${readError.message}. Please run: ${FIX_PERMISSIONS_COMMAND}` 
           };
         }
       } catch (statError: any) {
         return { 
           success: false, 
-          error: `Cannot access WORKTREE_ROOT ${WORKTREE_ROOT}: ${statError.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh` 
+          error: `Cannot access WORKTREE_ROOT ${WORKTREE_ROOT}: ${statError.message}. Please run: ${FIX_PERMISSIONS_COMMAND}` 
         };
       }
       
@@ -722,8 +724,8 @@ async function createWorktreeForRepo(
                 }
               } catch (retryError: any) {
                 const errorMsg = retryError.code === 'EACCES'
-                  ? `Permission denied creating ${currentPath}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`
-                  : `Failed to create worktree directory ${worktreeDir}: ${retryError.message}. Parent directory: ${path.dirname(currentPath)}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`;
+                  ? `Permission denied creating ${currentPath}. Please run: ${FIX_PERMISSIONS_COMMAND}`
+                  : `Failed to create worktree directory ${worktreeDir}: ${retryError.message}. Parent directory: ${path.dirname(currentPath)}. Please run: ${FIX_PERMISSIONS_COMMAND}`;
                 return { 
                   success: false, 
                   error: errorMsg
@@ -732,8 +734,8 @@ async function createWorktreeForRepo(
             } else {
               // This is WORKTREE_ROOT creation failure - already handled above, but just in case
               const errorMsg = mkdirError.code === 'EACCES'
-                ? `Permission denied creating ${WORKTREE_ROOT}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`
-                : `Failed to create ${WORKTREE_ROOT}: ${mkdirError.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`;
+                ? `Permission denied creating ${WORKTREE_ROOT}. Please run: ${FIX_PERMISSIONS_COMMAND}`
+                : `Failed to create ${WORKTREE_ROOT}: ${mkdirError.message}. Please run: ${FIX_PERMISSIONS_COMMAND}`;
               return { 
                 success: false, 
                 error: errorMsg
@@ -754,8 +756,8 @@ async function createWorktreeForRepo(
       console.log(`Ensured worktree directory exists: ${worktreeDir}`);
     } catch (error: any) {
       const errorMsg = error.code === 'EACCES'
-        ? `Permission denied: ${error.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`
-        : `Failed to create worktree directory ${worktreeDir}: ${error.message}. Please run: cd /home/tim-175/worktree-manager && ./fix-permissions.sh`;
+        ? `Permission denied: ${error.message}. Please run: ${FIX_PERMISSIONS_COMMAND}`
+        : `Failed to create worktree directory ${worktreeDir}: ${error.message}. Please run: ${FIX_PERMISSIONS_COMMAND}`;
       return { 
         success: false, 
         error: errorMsg
@@ -3069,7 +3071,7 @@ export async function DELETE(request: Request) {
                      `To fix this, run on the host:\n` +
                      `  sudo rm -rf "${hostPath}"\n\n` +
                      `Or fix permissions for all worktrees:\n` +
-                     `  cd /home/tim-175/worktree-manager && ./fix-permissions.sh`,
+                    `  ${FIX_PERMISSIONS_COMMAND}`,
               success: false,
               hostPath: hostPath
             },
