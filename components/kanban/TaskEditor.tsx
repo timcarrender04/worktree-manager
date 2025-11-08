@@ -78,6 +78,12 @@ export function TaskEditor({
     );
   };
 
+  const displayedRepos = Array.from(
+    new Set([...(availableRepositories || []), ...selectedRepos])
+  );
+
+  const isRepoSelectable = (repo: string) => availableRepositories.includes(repo);
+
   if (!item) return null;
 
   return (
@@ -122,31 +128,42 @@ export function TaskEditor({
             />
           </div>
 
-          {availableRepositories.length > 0 && (
-            <div className="space-y-2">
-              <Label>Repositories</Label>
-              <div className="flex flex-wrap gap-2 p-3 border rounded-md min-h-[60px]">
-                {availableRepositories.map((repo) => (
-                  <Badge
-                    key={repo}
-                    variant={selectedRepos.includes(repo) ? 'default' : 'outline'}
-                    className="cursor-pointer"
-                    onClick={() => toggleRepo(repo)}
-                  >
-                    {repo}
-                    {selectedRepos.includes(repo) && (
-                      <X className="h-3 w-3 ml-1" />
-                    )}
-                  </Badge>
-                ))}
-                {selectedRepos.length === 0 && availableRepositories.length === 0 && (
-                  <span className="text-sm text-muted-foreground">
-                    No repositories available
-                  </span>
-                )}
-              </div>
+          <div className="space-y-2">
+            <Label>Repositories</Label>
+            <div className="flex flex-wrap gap-2 p-3 border rounded-md min-h-[60px]">
+              {displayedRepos.length > 0 ? (
+                displayedRepos.map((repo) => {
+                  const selected = selectedRepos.includes(repo);
+                  const selectable = isRepoSelectable(repo);
+
+                  return (
+                    <Badge
+                      key={repo}
+                      variant={selected ? 'default' : 'outline'}
+                      className={`cursor-${selectable ? 'pointer' : 'default'} ${
+                        selectable ? '' : 'opacity-70'
+                      }`}
+                      onClick={() => selectable && toggleRepo(repo)}
+                    >
+                      {repo}
+                      {selected && (
+                        <X className="h-3 w-3 ml-1" />
+                      )}
+                    </Badge>
+                  );
+                })
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  No repositories available
+                </span>
+              )}
             </div>
-          )}
+            {selectedRepos.length > 0 && displayedRepos.length > availableRepositories.length && (
+              <p className="text-xs text-muted-foreground">
+                Some repositories are no longer available for selection but remain linked to this task.
+              </p>
+            )}
+          </div>
         </div>
 
         <DialogFooter>

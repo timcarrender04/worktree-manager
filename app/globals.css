@@ -116,6 +116,11 @@ body {
   overscroll-behavior-y: contain;
 }
 
+.dark .dark\:bg-slate-950 {
+  background-color: lab(97 0.51 -4.44);
+  color: var(--foreground);
+}
+
 /* Typography System */
 h1 {
   font-family: var(--font-montserrat), system-ui, sans-serif;
