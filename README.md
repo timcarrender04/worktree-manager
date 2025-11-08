@@ -12,26 +12,63 @@ A Next.js web application for managing Git working trees across multiple reposit
 
 ## Quick Start
 
-### Using Docker Compose
+### Container Deployment (Recommended)
 
-1. **Set up environment variables**:
+The application is designed to run inside a Docker container with all Git operations mounted from the host. The steps below walk through a clean installation on any Linux host or container platform (Docker Desktop, Colima, Kubernetes, etc.).
+
+1. **Install prerequisites**
+   - Docker Engine 24+ (or a compatible runtime such as containerd)
+   - Docker Compose V2 (`docker compose` CLI)
+   - Git 2.40+
+
+2. **Pick a host workspace root**
+   - Choose a directory on the host where all repositories and worktrees will live, for example `/srv/worktree-manager`.
+   - Within that directory create the following nested structure:
+     ```bash
+     sudo mkdir -p /srv/worktree-manager/repos/<your-username>/Tree
+     sudo chown -R $USER:$USER /srv/worktree-manager
+     ```
+     The `<your-username>` segment keeps every developer isolated while sharing a single repo cache.
+
+3. **Clone the application**
    ```bash
-   # Copy the example environment file
+   git clone https://github.com/<org-or-user>/worktree-manager.git /srv/worktree-manager/app
+   cd /srv/worktree-manager/app
+   ```
+
+4. **Prepare environment configuration**
+   ```bash
    cp .env.example .env
-   
-   # Edit .env and fill in your values
-   nano .env  # or use your preferred editor
+   nano .env  # populate the variables listed below
    ```
-   
-   At minimum, you need to set `GITHUB_TOKEN`. See [Environment Variables](#environment-variables) section for details.
 
-2. **Build and run**:
+   At minimum set `GITHUB_TOKEN` and the `WORKTREE_ROOT` family of variables so the container knows where the repositories live.
+
+5. **Map host directories to the container**
+   Update `docker-compose.yml` (or override via `docker compose -f docker-compose.yml -f docker-compose.override.yml up`) so that:
+   - `${HOST_REPO_ROOT}` points to `/srv/worktree-manager/repos`
+   - `${WORKTREE_ROOT}` points to `/srv/worktree-manager/repos/<your-username>/Tree`
+   - The `volumes` section mounts `${HOST_REPO_ROOT}` to `/repos` inside the container
+
+   Example override file:
+   ```yaml
+   services:
+     worktree-manager:
+       environment:
+         HOST_REPO_ROOT: /srv/worktree-manager/repos
+         WORKTREE_ROOT: /repos/<your-username>/Tree
+       volumes:
+         - /srv/worktree-manager/repos:/repos:rw
+   ```
+
+6. **Start the stack**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
-3. **Access the UI**:
-   Open http://localhost:3021 in your browser (port configured in docker-compose.yml)
+7. **Access the UI**
+   - Open http://localhost:3021 (or the port you exposed) to confirm the deployment.
+   - The first load may take a few seconds while Git repositories are scanned.
 
 ### Development Mode
 
@@ -102,6 +139,11 @@ Create the per-user directory ahead of time (for example `mkdir -p /home/ert/pro
 - `NEXT_PUBLIC_SUPABASE_URL`: Supabase project URL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Supabase anonymous/public key
 - `SUPABASE_SERVICE_ROLE_KEY`: Supabase service role key (for admin operations)
+
+**AI Provider Configuration:**
+- `OLLAMA_SERVER`: Base URL for the Ollama server (default: `https://ollama.timcarrender.me`)
+- `OLLAMA_BASE_URL`: Alternate key for the same value; the application checks both variables.
+  - The default endpoint hosts the shared Ollama instance documented at https://ollama.timcarrender.me. Override these values if you operate a private Ollama deployment.
 
 **Docker Configuration:**
 - `USER_ID`: Linux user ID for Docker container, should match host user ID (default: `1020`)
@@ -177,7 +219,7 @@ The docker-compose.yml mounts the parent directory (`../`) to `/repos` so the co
      worktree-manager:
        environment:
          - HOST_REPO_ROOT=/home/ert/projects/backend/repo-hub/repos
-          - WORKTREE_ROOT=/repos/hds-175/Tree
+         - WORKTREE_ROOT=/repos/hds-175/Tree
        volumes:
          - ${HOST_REPO_ROOT}:/repos:rw
    ```
@@ -256,10 +298,22 @@ worktree-manager/
 │   │   └── Sidebar.tsx            # Navigation sidebar
 │   ├── layout.tsx                 # Root layout with sidebar
 │   └── page.tsx                   # Main worktrees UI
+├── dev/
+│   └── workspaces/                # VS Code workspace configurations
+├── docs/
+│   ├── examples/                  # Sample filesystem layouts and reference data
+│   └── ...                        # Operational guides and runbooks
+├── scripts/                       # Automation scripts (TS + bash)
 ├── Dockerfile
 ├── docker-compose.yml
 └── package.json
 ```
+
+## Supporting Resources
+
+- `docs/`: Collected runbooks, example filesystem layouts, and environment-specific guides.
+- `dev/workspaces/`: Shared VS Code workspace files grouped away from the project root.
+- `scripts/`: Automation utilities for local development, testing, and operations.
 
 ## License
 

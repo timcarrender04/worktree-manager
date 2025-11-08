@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test script for AWS credentials POST endpoints
-# Usage: ./test-aws-credentials.sh
+# Usage: ./scripts/test-aws-credentials.sh
 
 BASE_URL="http://localhost:3333"
 

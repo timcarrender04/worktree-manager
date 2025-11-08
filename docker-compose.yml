@@ -1,3 +1,5 @@
+
+
 services:
   worktree-manager-hds-175:
     build:
@@ -14,7 +16,7 @@ services:
     env_file:
       - .env
     ports:
-      - "3021:3000"
+      - "3334:3334"
     environment:
       - REPO_ROOT=/repos
       - HOST_REPO_ROOT=${HOST_REPO_ROOT:-/home/ert/projects/backend/repo-hub/repos}
@@ -28,6 +30,11 @@ services:
       - BACKEND_KEY=${BACKEND_KEY:-backend}
       - VIEWER_KEY=${VIEWER_KEY:-viewer}
       - NODE_ENV=development
+      - PGHOST=repo-hub-db
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGPASSWORD=postgres
+      - PGDATABASE=repo_hub
     volumes:
       # Mount the directory containing your repositories
       # Adjust this path to match where your repositories are located on the host
@@ -40,8 +47,12 @@ services:
     restart: unless-stopped
     networks:
       - worktree-network
+      - repo-hub-network
 
 networks:
   worktree-network:
     driver: bridge
+  repo-hub-network:
+    external: true
+    name: repo-hub_repo_hub_network
 

@@ -162,7 +162,7 @@ curl -X POST http://localhost:3015/api/ai/generate-task \
 - ✅ UI/UX improvements
 
 ### Test Results Location:
-All test results saved in: `/home/tim-175/repos/Tree/worktree-manager/worktree-manager-feat-ai-project-maker/test-results/`
+All test results saved in: `<repo-root>/docs/test-results/`
 
 ---
 

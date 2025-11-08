@@ -60,7 +60,7 @@ The database storage endpoint (`/api/aws-credentials`) has a separate issue (lik
 To run the test again:
 ```bash
 cd /home/ert/projects/backend/repo-hub/worktree-manager
-./test-aws-credentials.sh
+./scripts/test-aws-credentials.sh
 ```
 
 

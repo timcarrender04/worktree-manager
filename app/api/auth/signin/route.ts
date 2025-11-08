@@ -37,11 +37,11 @@ export async function POST(request: Request) {
       console.log('Using direct PostgreSQL connection for authentication')
       const { Pool } = await import('pg')
       const pool = new Pool({
-        host: 'localhost',
-        port: 5433,
-        database: 'repo_hub',
-        user: 'postgres',
-        password: 'postgres',
+        host: process.env.PGHOST || 'localhost',
+        port: Number(process.env.PGPORT || 5432),
+        database: process.env.PGDATABASE || 'repo_hub',
+        user: process.env.PGUSER || 'postgres',
+        password: process.env.PGPASSWORD || 'postgres',
       })
       
       const result = await pool.query(

@@ -2,7 +2,7 @@ FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-RUN apk add --no-cache libc6-compat git
+RUN apk add --no-cache libc6-compat git bash
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
@@ -29,8 +29,8 @@ RUN addgroup --system --gid ${GROUP_ID} nodejs 2>/dev/null || true
 RUN adduser --system --uid ${USER_ID} --ingroup nodejs nextjs 2>/dev/null || \
     adduser --system --uid ${USER_ID} nextjs 2>/dev/null || true
 
-# Make sure git is available in the container
-RUN apk add --no-cache git
+# Make sure git and bash are available in the container
+RUN apk add --no-cache git bash
 
 # Copy dependencies and source code
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules

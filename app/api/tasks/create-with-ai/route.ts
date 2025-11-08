@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     } catch (error: any) {
       console.error('Error generating task:', error);
       return NextResponse.json(
-        { error: `Failed to generate task: ${error.message}. Please ensure Ollama server is running at ${process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || 'http://192.168.1.223:11434'}` },
+        { error: `Failed to generate task: ${error.message}. Please ensure Ollama server is running at ${process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || 'https://ollama.timcarrender.me'}` },
         { status: 500 }
       );
     }

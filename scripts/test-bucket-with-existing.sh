@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test script to test bucket creation with existing account or create new one
-# Usage: ./test-bucket-with-existing.sh [account_id]
+# Usage: ./scripts/test-bucket-with-existing.sh [account_id]
 
 BASE_URL="http://localhost:3333"
 ACCOUNT_ID="$1"

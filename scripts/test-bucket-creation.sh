@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test script to create a GitHub account and verify bucket creation
-# Usage: ./test-bucket-creation.sh
+# Usage: ./scripts/test-bucket-creation.sh
 
 BASE_URL="http://localhost:3333"
 ENV_FILE=".env.local"

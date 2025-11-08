@@ -14,12 +14,49 @@ export type TaskOutput = z.infer<typeof TaskOutputSchema>;
 
 const parser = StructuredOutputParser.fromZodSchema(TaskOutputSchema);
 
+function sanitizeTaskOutput(
+  result: TaskOutput,
+  branchType: 'feat' | 'bugs' | 'fixes' | 'qaqc'
+): TaskOutput {
+  let sanitizedBranchName = result.branchName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  if (!sanitizedBranchName.startsWith(`${branchType}-`)) {
+    sanitizedBranchName = `${branchType}-${sanitizedBranchName}`;
+  }
+
+  if (sanitizedBranchName.length > 30) {
+    const prefix = `${branchType}-`;
+    const namePart = sanitizedBranchName.substring(prefix.length);
+    const words = namePart.split('-').filter((w) => w.length > 0);
+
+    let truncated = words.slice(0, 3).join('-');
+    if ((prefix + truncated).length > 30) {
+      truncated = words.slice(0, 2).join('-');
+    }
+    if ((prefix + truncated).length > 30) {
+      truncated = words[0] || 'task';
+    }
+
+    sanitizedBranchName = prefix + truncated;
+    sanitizedBranchName = sanitizedBranchName.substring(0, 30);
+  }
+
+  return {
+    ...result,
+    branchName: sanitizedBranchName,
+  };
+}
+
 export async function generateTaskFromVoice(
   voiceTranscript: string,
   branchType: 'feat' | 'bugs' | 'fixes' | 'qaqc'
 ): Promise<TaskOutput> {
   // Support both OLLAMA_SERVER and OLLAMA_BASE_URL for compatibility
-  const ollamaServer = process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || '192.168.1.223:11434';
+  const ollamaServer = process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || 'https://ollama.timcarrender.me';
   // Add http:// if not present
   const ollamaBaseUrl = ollamaServer.startsWith('http') ? ollamaServer : `http://${ollamaServer}`;
   const ollamaModel = process.env.OLLAMA_MODEL || 'mistral';
@@ -116,51 +153,29 @@ Return ONLY valid JSON (no markdown, no extra text):
       console.warn(`[AI] WARNING: Generation took ${(duration / 1000).toFixed(2)}s. This suggests the model may not be using GPU. Check Ollama server GPU configuration.`);
     }
 
-    // Validate and sanitize the branch name - keep it SHORT
-    let sanitizedBranchName = result.branchName
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-
-    // Ensure it starts with the branch type prefix
-    if (!sanitizedBranchName.startsWith(`${branchType}-`)) {
-      sanitizedBranchName = `${branchType}-${sanitizedBranchName}`;
-    }
-
-    // Enforce maximum length of 30 characters (including prefix)
-    // If too long, truncate intelligently by removing words from the middle/end
-    if (sanitizedBranchName.length > 30) {
-      const prefix = `${branchType}-`;
-      const namePart = sanitizedBranchName.substring(prefix.length);
-      
-      // Split into words and keep only the most important ones
-      const words = namePart.split('-').filter(w => w.length > 0);
-      
-      // Keep only first 2-3 words if it's still too long
-      let truncated = words.slice(0, 3).join('-');
-      if ((prefix + truncated).length > 30) {
-        truncated = words.slice(0, 2).join('-');
-      }
-      if ((prefix + truncated).length > 30) {
-        truncated = words[0] || 'task';
-      }
-      
-      sanitizedBranchName = prefix + truncated;
-      
-      // Final safety: hard limit at 30 characters
-      sanitizedBranchName = sanitizedBranchName.substring(0, 30);
-    }
-
-    return {
-      ...result,
-      branchName: sanitizedBranchName,
-    };
+    return sanitizeTaskOutput(result as TaskOutput, branchType);
   } catch (error) {
     console.error('Error generating task with Ollama:', error);
     
     // Check if it's a model not found error
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const llmOutput =
+      typeof error === 'object' && error !== null && 'llmOutput' in error
+        ? (error as any).llmOutput
+        : undefined;
+
+    if (llmOutput) {
+      const jsonMatch = String(llmOutput).match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = TaskOutputSchema.parse(JSON.parse(jsonMatch[0]));
+          console.warn('[AI] Parsed task output from non-JSON response.');
+          return sanitizeTaskOutput(parsed, branchType);
+        } catch (parseError) {
+          console.warn('[AI] Failed to salvage task output from llmOutput:', parseError);
+        }
+      }
+    }
     if (errorMessage.includes('not found') || errorMessage.includes('404')) {
       console.warn(`Ollama model "${ollamaModel}" not found. Available models: mistral, llama2, codellama, medllama2. Using fallback generation.`);
       // Don't throw - let the caller handle fallback
@@ -183,7 +198,7 @@ export async function generateBranchNameFromContext(
   repositories: string[] = []
 ): Promise<string> {
   // Support both OLLAMA_SERVER and OLLAMA_BASE_URL for compatibility
-  const ollamaServer = process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || '192.168.1.223:11434';
+  const ollamaServer = process.env.OLLAMA_SERVER || process.env.OLLAMA_BASE_URL || 'https://ollama.timcarrender.me';
   // Add http:// if not present
   const ollamaBaseUrl = ollamaServer.startsWith('http') ? ollamaServer : `http://${ollamaServer}`;
   const ollamaModel = process.env.OLLAMA_MODEL || 'mistral';

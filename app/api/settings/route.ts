@@ -25,7 +25,7 @@ export async function GET() {
       repoRoot: process.env.REPO_ROOT || '',
       hostRepoRoot: process.env.HOST_REPO_ROOT || '',
       worktreeRoot: process.env.WORKTREE_ROOT || process.env.TREE_LOCATION || '',
-      ollamaUrl: process.env.OLLAMA_URL || 'http://localhost:11434',
+      ollamaUrl: process.env.OLLAMA_URL || 'https://ollama.timcarrender.me/',
       vercelToken: process.env.VERCEL_TOKEN || '',
       vercelOrgId: process.env.VERCEL_ORG_ID || '',
       vercelProjectId: process.env.VERCEL_PROJECT_ID || '',

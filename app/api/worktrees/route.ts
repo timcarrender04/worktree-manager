@@ -108,7 +108,7 @@ const REPO_HUB_ROOT = process.env.REPO_HUB_ROOT || path.resolve(process.cwd(), '
 const ROOT_DIR = process.env.REPO_ROOT || REPO_HUB_ROOT;
 const HOST_ROOT_DIR = process.env.HOST_REPO_ROOT || ROOT_DIR;
 const WORKTREE_MANAGER_ROOT = process.env.WORKTREE_MANAGER_ROOT || process.cwd();
-const FIX_PERMISSIONS_COMMAND = `cd ${WORKTREE_MANAGER_ROOT} && ./fix-permissions.sh`;
+const FIX_PERMISSIONS_COMMAND = `cd ${WORKTREE_MANAGER_ROOT} && ./scripts/fix-permissions.sh`;
     // Worktrees are organized in Tree/{repo}/{branchName} at the root level
     // Use ROOT_DIR (container path) for actual file operations, HOST_ROOT_DIR is only for path translation
     const WORKTREE_ROOT = process.env.WORKTREE_ROOT || path.join(ROOT_DIR, 'Tree');
