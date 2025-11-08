@@ -1184,14 +1184,19 @@ export default function Home() {
 
   return (
     <>
-      <div className="max-w-6xl mx-auto">
-        <h1 className="mb-8 mt-0">
-          Git Working Trees
-        </h1>
+      <div className="max-w-7xl w-full mx-auto px-2 sm:px-4 md:px-0 space-y-10">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <h1 className="mb-0 mt-0">
+            Git Working Trees
+          </h1>
+          <p className="text-sm sm:text-base text-[var(--foreground-muted)] sm:max-w-lg">
+            Keep projects in sync, create new worktrees, and monitor your local environments at a glance.
+          </p>
+        </div>
 
         {/* Create New Working Tree */}
-        <div className="bg-[var(--white)] rounded-lg shadow-lg p-6 mb-8 border border-[var(--white-100)]">
-          <h2 className="mb-6">Create New Working Tree</h2>
+        <section className="bg-[var(--white)]/95 rounded-2xl shadow-xl border border-[var(--white-100)]/80 p-6 sm:p-8 space-y-6">
+          <h2 className="mb-0">Create New Working Tree</h2>
           
           {message && (
             <div className={`mb-6 p-4 rounded-lg flex items-start gap-3 ${
@@ -1208,47 +1213,49 @@ export default function Home() {
             </div>
           )}
 
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
-              Project
-            </label>
-            <select
-              value={selectedProjectId}
-              onChange={(e) => {
-                const newProjectId = e.target.value;
-                setSelectedProjectId(newProjectId);
-                setSelectedRepos([]);
-                setBaseBranches({});
-                setSelectedType('');
-                setBranchName('');
-                setIsAiGenerated(false);
-                setAiDialogOpen(false);
-                setAiDialogType(null);
-                setVoiceTranscript('');
-                setAiGeneratedTask(null);
-              }}
-              className="w-full px-4 py-2 border border-[var(--white-100)] rounded-lg bg-[var(--white)] text-[var(--foreground)] focus:ring-2 focus:ring-[var(--accent)] focus:border-[var(--accent)] transition-colors"
-              disabled={creating || projects.length === 0}
-            >
-              <option value="">Select project...</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                  {typeof project.repository_count === 'number' ? ` (${project.repository_count} repos)` : ''}
-                </option>
-              ))}
-            </select>
-            {projectFetchError && (
-              <p className="mt-2 text-sm text-red-600">{projectFetchError}</p>
-            )}
-            {!projectFetchError && projects.length === 0 && (
-              <p className="mt-2 text-sm text-[var(--foreground-muted)]">
-                No projects available. Create a project in Project Tim first, then refresh this page.
-              </p>
-            )}
+          <div className="grid gap-6 md:grid-cols-[1fr]">
+            <div>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                Project
+              </label>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => {
+                  const newProjectId = e.target.value;
+                  setSelectedProjectId(newProjectId);
+                  setSelectedRepos([]);
+                  setBaseBranches({});
+                  setSelectedType('');
+                  setBranchName('');
+                  setIsAiGenerated(false);
+                  setAiDialogOpen(false);
+                  setAiDialogType(null);
+                  setVoiceTranscript('');
+                  setAiGeneratedTask(null);
+                }}
+                className="w-full px-4 py-2 border border-[var(--white-100)] rounded-lg bg-[var(--white)] text-[var(--foreground)] focus:ring-2 focus:ring-[var(--accent)] focus:border-[var(--accent)] transition-colors"
+                disabled={creating || projects.length === 0}
+              >
+                <option value="">Select project...</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                    {typeof project.repository_count === 'number' ? ` (${project.repository_count} repos)` : ''}
+                  </option>
+                ))}
+              </select>
+              {projectFetchError && (
+                <p className="mt-2 text-sm text-red-600">{projectFetchError}</p>
+              )}
+              {!projectFetchError && projects.length === 0 && (
+                <p className="mt-2 text-sm text-[var(--foreground-muted)]">
+                  No projects available. Create a project in Project Tim first, then refresh this page.
+                </p>
+              )}
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                 Repositories {selectedRepos.length > 0 && <span className="text-[var(--accent)]">({selectedRepos.length} selected)</span>}
@@ -1511,11 +1518,16 @@ export default function Home() {
           >
             {creating ? `Creating in ${selectedRepos.length} repositor${selectedRepos.length > 1 ? 'ies' : 'y'}...` : `Create Working Tree${selectedRepos.length > 1 ? 's' : ''}`}
           </button>
-        </div>
+        </section>
 
         {/* Existing Working Trees */}
-        <div className="bg-[var(--white)] rounded-lg shadow-lg p-6 border border-[var(--white-100)]">
-          <h2 className="mb-4">Existing Working Trees</h2>
+        <section className="bg-[var(--white)]/95 rounded-2xl shadow-xl border border-[var(--white-100)]/80 p-6 sm:p-8 space-y-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="mb-0">Existing Working Trees</h2>
+            <p className="text-sm text-[var(--foreground-muted)] max-w-xl">
+              Filter by status, copy paths, or clean up finished branches directly from this table.
+            </p>
+          </div>
           
           {worktrees.length === 0 ? (
             <p className="text-[var(--foreground-muted)]">No working trees found. Create one above to get started.</p>
@@ -1583,57 +1595,57 @@ export default function Home() {
                   {refreshingWorktrees ? 'Refreshing...' : 'Refresh'}
                 </button>
               </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-[var(--white-100)]">
-                  <thead className="bg-[var(--white-50)]">
+              <div className="overflow-hidden border border-[var(--white-100)]/80 rounded-xl">
+                <table className="w-full text-sm">
+                  <thead className="bg-[var(--white-50)] text-[var(--foreground-muted)]">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-sm font-semibold uppercase tracking-wide">
                         Repository
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-sm font-semibold uppercase tracking-wide">
                         Type
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-sm font-semibold uppercase tracking-wide">
                         Branch
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-sm font-semibold uppercase tracking-wide">
                         Status
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-sm font-semibold uppercase tracking-wide">
                         Path
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-[var(--foreground-muted)] uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-sm font-semibold uppercase tracking-wide">
                         Actions
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-[var(--white)] divide-y divide-[var(--white-100)]">
+                  <tbody className="bg-[var(--white)]">
                     {filteredWorktrees.map((wt, idx) => {
                       const normalizedStatus = (wt.status || wt.columnId || 'backlog')?.toLowerCase() || 'backlog';
                       const statusLabel = formatKanbanStatusLabel(normalizedStatus);
                       return (
-                        <tr key={idx} className="hover:bg-[var(--white-50)] transition-colors">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-[var(--foreground)]">
+                        <tr key={idx} className="transition-colors odd:bg-[var(--white)] even:bg-[var(--white-50)]/60 hover:bg-[var(--white-50)]">
+                          <td className="px-6 py-4 text-base font-semibold text-[var(--foreground)]">
                             {REPO_DISPLAY_NAMES[wt.repo] || wt.repoName}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--foreground-muted)]">
+                          <td className="px-6 py-4 text-sm text-[var(--foreground-muted)]">
                             {TYPE_DISPLAY_NAMES[wt.type] || wt.type}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--foreground)] font-mono">
+                          <td className="px-6 py-4 text-sm text-[var(--foreground)] font-mono">
                             {wt.branch}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                          <td className="px-6 py-4">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-medium ${getStatusBadgeClasses(normalizedStatus)}`}>
                               {statusLabel}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-sm text-[var(--foreground-muted)] font-mono">
-                            <div className="flex items-center gap-2">
-                              <span className="break-all">{wt.path}</span>
+                          <td className="px-6 py-4 text-sm text-[var(--foreground-muted)] font-mono align-top">
+                            <div className="flex items-start gap-2">
+                              <span className="break-all leading-relaxed">{wt.path}</span>
                               <button
                                 type="button"
                                 onClick={() => handleCopyPath(wt.path)}
-                                className="inline-flex items-center justify-center w-7 h-7 rounded-md border border-[var(--white-100)] bg-[var(--white)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--white-50)] transition-colors"
+                                className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-[var(--white-100)] bg-[var(--white)] text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--white-50)] transition-colors"
                                 title="Copy path"
                               >
                                 {copiedPath === wt.path ? (
@@ -1647,7 +1659,7 @@ export default function Home() {
                               <span className="mt-1 block text-xs text-green-600">Copied!</span>
                             )}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <td className="px-6 py-4 text-sm font-medium">
                             <button
                               onClick={() => openDeleteDialog(wt)}
                               disabled={deleting === wt.path}
@@ -1672,7 +1684,7 @@ export default function Home() {
               </div>
             </>
           )}
-        </div>
+        </section>
       </div>
 
       {/* Delete Confirmation Dialog */}

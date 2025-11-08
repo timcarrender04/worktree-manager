@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-PORT="${DEV_PORT:-3333}"
+PORT="${DEV_PORT:-3334}"
 
 get_pids() {
   local port="$1"
